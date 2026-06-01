@@ -355,3 +355,30 @@ def list_runs(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
 @router.get("/runs/{run_id}/events", response_model=list[models.Event])
 def list_events(run_id: int, orch: Orchestrator = Depends(get_orchestrator)):
     return orch.list_events(run_id)
+
+
+# ---------- next-steps suggestions ----------
+class NextStepsChoice(BaseModel):
+    suggested_task_ids: list[int]
+    selected_task_ids: list[int]
+    action: str  # 'selected' | 'skipped' | 'created_new'
+
+
+@router.get("/tasks/{task_id}/next-steps")
+def get_next_steps(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
+    """Get suggested next tasks to work on after completing a task."""
+    if orch.get_task(task_id) is None:
+        raise HTTPException(404, f"task {task_id} not found")
+    return orch.get_next_steps(task_id)
+
+
+@router.post("/tasks/{task_id}/next-steps", response_model=models.TaskSuggestion)
+def save_next_steps_choice(
+    task_id: int, body: NextStepsChoice, orch: Orchestrator = Depends(get_orchestrator)
+):
+    """Save user's choice for next steps."""
+    if orch.get_task(task_id) is None:
+        raise HTTPException(404, f"task {task_id} not found")
+    return orch.save_next_steps_choice(
+        task_id, body.suggested_task_ids, body.selected_task_ids, body.action
+    )
