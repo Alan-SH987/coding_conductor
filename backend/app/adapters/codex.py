@@ -264,6 +264,7 @@ class CodexAdapter(AgentAdapter):
         version = vout.decode("utf-8", "replace").strip().splitlines()[0] if vout else ""
 
         auth_ok = True
+        rate_limited = False
         detail = "ok"
         with tempfile.TemporaryDirectory() as tmp:
             spec = TaskSpec(goal="Reply with exactly one word: pong")
@@ -278,7 +279,10 @@ class CodexAdapter(AgentAdapter):
                         elif kind == "quota":
                             # Authenticated, just out of quota — surface but don't
                             # call it an auth failure.
+                            rate_limited = True
                             detail = ev.text or "usage limit reached"
             except Exception as exc:  # noqa: BLE001
                 return HealthStatus(ok=False, auth_ok=False, version=version, detail=str(exc))
-        return HealthStatus(ok=True, auth_ok=auth_ok, version=version, detail=detail)
+        return HealthStatus(
+            ok=True, auth_ok=auth_ok, rate_limited=rate_limited, version=version, detail=detail
+        )

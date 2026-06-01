@@ -419,6 +419,8 @@ class ClaudeAdapter(AgentAdapter):
         low = text.lower()
         if "authenticat" in low or "401" in low or "credential" in low:
             return "auth"
+        if "usage limit" in low or "rate limit" in low or "quota" in low:
+            return "quota"
         return "runtime"
 
     @staticmethod
@@ -450,15 +452,23 @@ class ClaudeAdapter(AgentAdapter):
         version = vout.decode("utf-8", "replace").strip().splitlines()[0] if vout else ""
 
         auth_ok = True
+        rate_limited = False
         detail = "ok"
         with tempfile.TemporaryDirectory() as tmp:
             spec = TaskSpec(goal="Reply with exactly one word: pong")
             ctx = RunContext(worktree_path=tmp, timeout=60)
             try:
                 async for ev in self.run(spec, ctx):
-                    if ev.type == EventType.error and ev.data.get("kind") == "auth":
-                        auth_ok = False
-                        detail = ev.text or "authentication failed"
+                    if ev.type == EventType.error:
+                        kind = ev.data.get("kind")
+                        if kind == "auth":
+                            auth_ok = False
+                            detail = ev.text or "authentication failed"
+                        elif kind == "quota":
+                            rate_limited = True
+                            detail = ev.text or "usage limit reached"
             except Exception as exc:  # noqa: BLE001
                 return HealthStatus(ok=False, auth_ok=False, version=version, detail=str(exc))
-        return HealthStatus(ok=True, auth_ok=auth_ok, version=version, detail=detail)
+        return HealthStatus(
+            ok=True, auth_ok=auth_ok, rate_limited=rate_limited, version=version, detail=detail
+        )

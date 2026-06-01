@@ -106,6 +106,39 @@ def recommend_model(
     }
 
 
+@router.get("/agents/health")
+async def agents_health(orch: Orchestrator = Depends(get_orchestrator)):
+    """Probe each agent CLI and report its current status.
+
+    On-demand only: every call spawns the CLIs and spends a negligible probe
+    (a one-word completion), so the UI triggers this from a button rather than
+    on every page load. Probes run concurrently and each is bounded by a timeout
+    so a wedged CLI can never hang the request.
+    """
+    async def probe(name: str, adapter) -> dict:
+        base = {"name": name, "ok": False, "auth_ok": False, "rate_limited": False,
+                "version": "", "detail": "", "status": "unavailable"}
+        try:
+            hs = await asyncio.wait_for(adapter.healthcheck(), timeout=45)
+        except asyncio.TimeoutError:
+            return {**base, "detail": "health probe timed out"}
+        except Exception as exc:  # noqa: BLE001
+            return {**base, "detail": str(exc)}
+        if not hs.ok:
+            status = "unavailable"
+        elif not hs.auth_ok:
+            status = "unauthenticated"
+        elif hs.rate_limited:
+            status = "rate_limited"
+        else:
+            status = "available"
+        return {"name": name, "ok": hs.ok, "auth_ok": hs.auth_ok,
+                "rate_limited": hs.rate_limited, "version": hs.version,
+                "detail": hs.detail, "status": status}
+
+    return await asyncio.gather(*(probe(n, a) for n, a in orch.adapters.items()))
+
+
 # ---------- projects ----------
 @router.post("/projects", response_model=models.Project, status_code=201)
 def create_project(body: ProjectCreate, orch: Orchestrator = Depends(get_orchestrator)):

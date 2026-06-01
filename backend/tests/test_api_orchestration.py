@@ -374,3 +374,37 @@ def test_non_git_path_400(client, tmp_path):
     r = client.post("/projects", json={"name": "p", "path": str(plain)})
     assert r.status_code == 400
     assert r.json()["error"] == "not_a_git_repo"
+
+
+def test_agents_health_status_derivation(tmp_path):
+    """GET /agents/health maps each adapter's HealthStatus to a derived status."""
+
+    class _HC(FakeAdapter):
+        def __init__(self, hs: HealthStatus):
+            super().__init__()
+            self._hs = hs
+
+        async def healthcheck(self) -> HealthStatus:
+            return self._hs
+
+    db = tmp_path / "health.db"
+    eng = create_engine(f"sqlite:///{db}", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(eng)
+    adapters = {
+        "claude": _HC(HealthStatus(ok=True, auth_ok=True)),
+        "codex": _HC(HealthStatus(ok=True, auth_ok=True, rate_limited=True)),
+        "noauth": _HC(HealthStatus(ok=True, auth_ok=False)),
+        "down": _HC(HealthStatus(ok=False, auth_ok=False, detail="CLI not found")),
+    }
+    app.dependency_overrides[get_orchestrator] = lambda: Orchestrator(adapters, engine=eng)
+    try:
+        res = TestClient(app).get("/agents/health")
+        assert res.status_code == 200
+        by_name = {a["name"]: a for a in res.json()}
+        assert by_name["claude"]["status"] == "available"
+        assert by_name["codex"]["status"] == "rate_limited"
+        assert by_name["codex"]["rate_limited"] is True
+        assert by_name["noauth"]["status"] == "unauthenticated"
+        assert by_name["down"]["status"] == "unavailable"
+    finally:
+        app.dependency_overrides.clear()

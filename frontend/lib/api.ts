@@ -72,6 +72,22 @@ export interface Agent {
   capabilities: string[];
 }
 
+export type AgentStatus =
+  | "available"
+  | "unauthenticated"
+  | "rate_limited"
+  | "unavailable";
+
+export interface AgentHealth {
+  name: string;
+  ok: boolean;
+  auth_ok: boolean;
+  rate_limited: boolean;
+  version: string;
+  detail: string;
+  status: AgentStatus;
+}
+
 export interface ApproveResult {
   ok: boolean;
   merged_sha: string | null;
@@ -150,6 +166,7 @@ const patch = <T>(path: string, body?: unknown) =>
 // ---------- endpoints ----------
 export const api = {
   listAgents: () => http<Agent[]>("/agents"),
+  checkAgentsHealth: () => http<AgentHealth[]>("/agents/health"),
 
   listProjects: (includeArchived = false) =>
     http<Project[]>(`/projects?include_archived=${includeArchived}`),

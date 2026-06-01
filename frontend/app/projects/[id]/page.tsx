@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui";
 import { ProjectSidebar } from "@/components/chat/ProjectSidebar";
 import { ConversationTurn } from "@/components/chat/ConversationTurn";
+import { AgentsHealth } from "@/components/chat/AgentsHealth";
 import {
   RightPanel,
   type PanelKind,
@@ -284,7 +285,10 @@ export default function ProjectPage({
             <h1 className="truncate text-lg font-semibold">
               {project?.name ?? `Project ${projectId}`}
             </h1>
-            <div className="ml-auto flex items-center gap-2 text-xs">
+            <div className="ml-auto flex items-center gap-4">
+              <AgentsHealth />
+            </div>
+            <div className="flex items-center gap-2 text-xs">
               {editingVerify ? (
                 <>
                   <input

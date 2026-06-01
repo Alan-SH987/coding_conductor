@@ -76,6 +76,7 @@ class RunContext:
 class HealthStatus:
     ok: bool          # CLI present and runnable
     auth_ok: bool     # logged in / credentials valid
+    rate_limited: bool = False  # authenticated but currently out of quota
     version: str = ""
     detail: str = ""
 
