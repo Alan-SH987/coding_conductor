@@ -80,13 +80,56 @@ def create_project(body: ProjectCreate, orch: Orchestrator = Depends(get_orchest
 
 
 @router.get("/projects", response_model=list[models.Project])
-def list_projects(orch: Orchestrator = Depends(get_orchestrator)):
-    return orch.list_projects()
+def list_projects(
+    include_archived: bool = False,
+    orch: Orchestrator = Depends(get_orchestrator),
+):
+    return orch.list_projects(include_archived=include_archived)
 
 
 @router.get("/projects/{project_id}", response_model=models.Project)
 def get_project(project_id: int, orch: Orchestrator = Depends(get_orchestrator)):
     proj = orch.get_project(project_id)
+    if proj is None:
+        raise HTTPException(404, f"project {project_id} not found")
+    return proj
+
+
+@router.post("/projects/{project_id}/pin", response_model=models.Project)
+def pin_project(project_id: int, orch: Orchestrator = Depends(get_orchestrator)):
+    proj = orch.pin_project(project_id, pinned=True)
+    if proj is None:
+        raise HTTPException(404, f"project {project_id} not found")
+    return proj
+
+
+@router.post("/projects/{project_id}/unpin", response_model=models.Project)
+def unpin_project(project_id: int, orch: Orchestrator = Depends(get_orchestrator)):
+    proj = orch.pin_project(project_id, pinned=False)
+    if proj is None:
+        raise HTTPException(404, f"project {project_id} not found")
+    return proj
+
+
+@router.post("/projects/{project_id}/archive", response_model=models.Project)
+def archive_project(project_id: int, orch: Orchestrator = Depends(get_orchestrator)):
+    proj = orch.archive_project(project_id, archived=True)
+    if proj is None:
+        raise HTTPException(404, f"project {project_id} not found")
+    return proj
+
+
+@router.post("/projects/{project_id}/unarchive", response_model=models.Project)
+def unarchive_project(project_id: int, orch: Orchestrator = Depends(get_orchestrator)):
+    proj = orch.archive_project(project_id, archived=False)
+    if proj is None:
+        raise HTTPException(404, f"project {project_id} not found")
+    return proj
+
+
+@router.delete("/projects/{project_id}", response_model=models.Project)
+def delete_project(project_id: int, orch: Orchestrator = Depends(get_orchestrator)):
+    proj = orch.delete_project(project_id)
     if proj is None:
         raise HTTPException(404, f"project {project_id} not found")
     return proj

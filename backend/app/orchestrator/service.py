@@ -466,14 +466,55 @@ class Orchestrator:
             s.refresh(review)
             return review
 
-    # ---------- reads ----------
-    def list_projects(self) -> list[models.Project]:
+    # ---------- project management ----------
+    def pin_project(self, project_id: int, pinned: bool = True) -> Optional[models.Project]:
         with Session(self.engine) as s:
-            return list(s.exec(select(models.Project).order_by(models.Project.id)).all())
+            proj = s.get(models.Project, project_id)
+            if proj is None or proj.deleted_at is not None:
+                return None
+            proj.is_pinned = pinned
+            s.add(proj)
+            s.commit()
+            s.refresh(proj)
+            return proj
+
+    def archive_project(self, project_id: int, archived: bool = True) -> Optional[models.Project]:
+        with Session(self.engine) as s:
+            proj = s.get(models.Project, project_id)
+            if proj is None or proj.deleted_at is not None:
+                return None
+            proj.is_archived = archived
+            s.add(proj)
+            s.commit()
+            s.refresh(proj)
+            return proj
+
+    def delete_project(self, project_id: int) -> Optional[models.Project]:
+        with Session(self.engine) as s:
+            proj = s.get(models.Project, project_id)
+            if proj is None or proj.deleted_at is not None:
+                return None
+            proj.deleted_at = datetime.now(timezone.utc)
+            s.add(proj)
+            s.commit()
+            s.refresh(proj)
+            return proj
+
+    # ---------- reads ----------
+    def list_projects(self, include_archived: bool = False) -> list[models.Project]:
+        with Session(self.engine) as s:
+            query = select(models.Project).where(models.Project.deleted_at == None)
+            if not include_archived:
+                query = query.where(models.Project.is_archived == False)
+            query = query.order_by(models.Project.is_pinned.desc(), models.Project.id)
+            return list(s.exec(query).all())
 
     def get_project(self, project_id: int) -> Optional[models.Project]:
         with Session(self.engine) as s:
-            return s.get(models.Project, project_id)
+            proj = s.get(models.Project, project_id)
+            if proj is None or proj.deleted_at is not None:
+                return None
+            return proj
 
     def list_tasks(self, project_id: int) -> list[models.Task]:
         with Session(self.engine) as s:

@@ -33,6 +33,9 @@ class Project(SQLModel, table=True):
     name: str
     path: str
     default_branch: str = "main"
+    is_pinned: bool = False
+    is_archived: bool = False
+    deleted_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utcnow)
 
 

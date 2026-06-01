@@ -10,6 +10,9 @@ export interface Project {
   name: string;
   path: string;
   default_branch: string;
+  is_pinned: boolean;
+  is_archived: boolean;
+  deleted_at: string | null;
   created_at: string;
 }
 
@@ -119,14 +122,23 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
 const post = <T>(path: string, body?: unknown) =>
   http<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
 
+const del = <T>(path: string) =>
+  http<T>(path, { method: "DELETE" });
+
 // ---------- endpoints ----------
 export const api = {
   listAgents: () => http<Agent[]>("/agents"),
 
-  listProjects: () => http<Project[]>("/projects"),
+  listProjects: (includeArchived = false) =>
+    http<Project[]>(`/projects?include_archived=${includeArchived}`),
   getProject: (id: number) => http<Project>(`/projects/${id}`),
   createProject: (name: string, path: string) =>
     post<Project>("/projects", { name, path }),
+  pinProject: (id: number) => post<Project>(`/projects/${id}/pin`),
+  unpinProject: (id: number) => post<Project>(`/projects/${id}/unpin`),
+  archiveProject: (id: number) => post<Project>(`/projects/${id}/archive`),
+  unarchiveProject: (id: number) => post<Project>(`/projects/${id}/unarchive`),
+  deleteProject: (id: number) => del<Project>(`/projects/${id}`),
 
   listTasks: (projectId: number) =>
     http<Task[]>(`/projects/${projectId}/tasks`),
