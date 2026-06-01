@@ -269,8 +269,8 @@ export function RightPanel({
       {open && (
         <div
           onMouseDown={() => setIsResizing(true)}
-          className={`absolute left-0 top-0 h-full w-1 cursor-col-resize hover:bg-zinc-600 ${
-            isResizing ? "bg-zinc-500" : "bg-transparent"
+          className={`absolute left-0 top-0 h-full w-1.5 cursor-col-resize transition-colors ${
+            isResizing ? "bg-blue-500" : "bg-transparent hover:bg-zinc-600"
           }`}
         />
       )}
