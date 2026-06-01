@@ -485,3 +485,79 @@ def save_next_steps_choice(
     return orch.save_next_steps_choice(
         task_id, body.suggested_task_ids, body.selected_task_ids, body.action
     )
+
+
+# ---------- Smart Decomposition and Parallel Execution Endpoints ----------
+
+
+@router.post("/tasks/{task_id}/smart-plan")
+async def smart_plan_task(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
+    """Enhanced planning with intelligent model assignment and dependency analysis.
+
+    This is the FIRST PHASE of two-phase task processing:
+    - Analyzes problem domain and complexity
+    - Assigns optimal AI model to each subtask
+    - Determines dependency relationships
+    - Returns subtasks ready for parallel execution
+    """
+    try:
+        children = await orch.smart_plan_task(task_id)
+        return {
+            "parent_task_id": task_id,
+            "subtasks": [jsonable_encoder(c) for c in children],
+            "count": len(children),
+        }
+    except AlreadyPlanned:
+        raise HTTPException(409, f"task {task_id} already has subtasks")
+    except PlanError as e:
+        raise HTTPException(500, str(e))
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+class ParallelRunRequest(BaseModel):
+    """Request body for parallel subtask execution."""
+    batch_indices: Optional[list[int]] = None
+
+
+@router.post("/tasks/{task_id}/run-parallel")
+async def run_subtasks_parallel(
+    task_id: int,
+    body: ParallelRunRequest = ParallelRunRequest(),
+    orch: Orchestrator = Depends(get_orchestrator),
+):
+    """Execute subtasks in parallel batches.
+
+    This is the SECOND PHASE of two-phase task processing:
+    - Runs subtasks concurrently where possible
+    - Respects dependency ordering
+    - Detects conflicts between subtasks
+    - Returns execution summary
+
+    Args:
+        task_id: Parent task ID
+        batch_indices: Optional list of subtask indices to run (None = all)
+    """
+    try:
+        result = await orch.run_subtasks_parallel(task_id, body.batch_indices)
+        return result
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.get("/tasks/{task_id}/merge-strategy")
+def get_merge_strategy(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
+    """Analyze subtask results and suggest optimal merge strategy.
+
+    Returns:
+        {
+            "strategy": "auto" | "sequential" | "manual",
+            "order": [subtask_ids] if sequential,
+            "conflicts": list of conflict descriptions,
+            "recommendation": human-readable explanation
+        }
+    """
+    try:
+        return orch.get_merge_strategy(task_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))

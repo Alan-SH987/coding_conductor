@@ -29,6 +29,11 @@ from app.gitops import GitOpsEngine
 from app.gitops.models import WorktreeHandle
 from app.orchestrator.model_router import ModelRouter
 from app.orchestrator.routing import select_agent
+from app.orchestrator.smart_decomposer import (
+    SmartDecomposer,
+    SubtaskSpec,
+    ResultMerger,
+)
 from app.storage import models
 from app.storage.db import engine as default_engine
 
@@ -807,3 +812,325 @@ class Orchestrator:
             s.commit()
             s.refresh(suggestion)
             return suggestion
+
+    # ---------- Smart Decomposition and Parallel Execution ----------
+
+    async def smart_plan_task(self, task_id: int) -> list[models.Task]:
+        """Enhanced task planning with intelligent model assignment.
+
+        This is the FIRST PHASE of the two-phase approach:
+        1. Analyze the problem and categorize domains
+        2. Decompose into subtasks
+        3. Assign optimal AI model to each subtask based on complexity and domain
+        4. Analyze dependencies for parallel execution
+
+        Returns list of created subtasks with enhanced metadata.
+        """
+        with Session(self.engine) as s:
+            task = s.get(models.Task, task_id)
+            if task is None:
+                raise ValueError(f"task {task_id} not found")
+            project = s.get(models.Project, task.project_id)
+            project_id = task.project_id
+            project_path = project.path
+            prior_status = task.status
+            prefer_agent = task.assigned_agent
+            goal = "\n".join(p for p in (task.title, task.description) if p)
+            has_children = s.exec(
+                select(models.Task.id).where(models.Task.parent_id == task_id)
+            ).first() is not None
+
+        if has_children:
+            raise AlreadyPlanned(task_id)
+
+        # Get planner and model router
+        planner_name = select_agent("plan", self.adapters)
+        planner = self.adapters.get(planner_name) if planner_name else None
+        if planner is None or "plan" not in planner.capabilities:
+            raise PlanError("no planning-capable agent is available")
+
+        model_router = ModelRouter()
+        smart_decomposer = SmartDecomposer(planner, model_router)
+
+        capabilities = sorted({c for a in self.adapters.values() for c in a.capabilities})
+
+        self._set_status(task_id, TaskStatus.planning)
+        try:
+            # Use smart decomposer instead of basic planner
+            enhanced_specs = await smart_decomposer.decompose_with_analysis(
+                goal, project_path, capabilities
+            )
+        except Exception:
+            self._update_task(task_id, status=prior_status)
+            raise
+
+        if not enhanced_specs:
+            self._update_task(task_id, status=prior_status)
+            raise PlanError("planner returned no subtasks")
+
+        # Create subtasks with enhanced metadata
+        children: list[models.Task] = []
+        for spec in enhanced_specs:
+            # Select agent based on recommended model
+            agent = select_agent(spec.capability, self.adapters, prefer=prefer_agent)
+
+            # Store enhanced metadata in description
+            enhanced_description = spec.description
+            if spec.domain or spec.complexity or spec.recommended_model:
+                metadata = f"\n\n[Metadata: domain={spec.domain.value}, complexity={spec.complexity}, model={spec.recommended_model}, impact={spec.estimated_impact}]"
+                enhanced_description += metadata
+
+            child = self.create_task(
+                project_id,
+                spec.title,
+                enhanced_description,
+                agent,
+                parent_id=task_id
+            )
+            children.append(child)
+
+        self._set_status(task_id, TaskStatus.planned)
+
+        # Log parallel execution plan
+        batches = smart_decomposer.get_parallel_batches(enhanced_specs)
+        logger.info(f"Task {task_id} decomposed into {len(children)} subtasks")
+        logger.info(f"Parallel execution plan: {len(batches)} batch(es)")
+        for i, batch in enumerate(batches):
+            logger.info(f"  Batch {i+1}: subtasks {batch} can run in parallel")
+
+        return children
+
+    async def run_subtasks_parallel(
+        self,
+        parent_task_id: int,
+        batch_indices: Optional[list[int]] = None,
+    ) -> dict:
+        """Execute subtasks in parallel batches.
+
+        This is the SECOND PHASE of the two-phase approach:
+        1. Identify which subtasks can run in parallel
+        2. Execute them concurrently
+        3. Monitor all subtask statuses
+        4. Detect potential conflicts
+
+        Args:
+            parent_task_id: ID of the parent (planned) task
+            batch_indices: Optional list of subtask indices to run.
+                          If None, runs all pending subtasks in parallel batches.
+
+        Returns:
+            {
+                "batches_completed": int,
+                "subtasks_run": list[int],
+                "conflicts_detected": list[ConflictInfo],
+            }
+        """
+        with Session(self.engine) as s:
+            parent_task = s.get(models.Task, parent_task_id)
+            if parent_task is None:
+                raise ValueError(f"task {parent_task_id} not found")
+
+            if parent_task.status != TaskStatus.planned:
+                raise ValueError(f"task {parent_task_id} is not in planned state")
+
+            # Get all subtasks
+            subtasks = list(s.exec(
+                select(models.Task)
+                .where(models.Task.parent_id == parent_task_id)
+                .order_by(models.Task.id)
+            ))
+
+        if not subtasks:
+            raise ValueError(f"task {parent_task_id} has no subtasks")
+
+        # Parse enhanced specs from subtask descriptions
+        enhanced_specs = []
+        for st in subtasks:
+            # Extract metadata if present
+            import re
+            match = re.search(
+                r'\[Metadata: domain=(\w+), complexity=(\w+), model=([\w\-\.]+), impact=(\w+)\]',
+                st.description or ""
+            )
+            if match:
+                from app.orchestrator.smart_decomposer import ProblemDomain
+                enhanced_specs.append(SubtaskSpec(
+                    title=st.title,
+                    description=st.description,
+                    capability="code",  # default
+                    domain=ProblemDomain(match.group(1)),
+                    complexity=match.group(2),
+                    recommended_model=match.group(3),
+                    depends_on=[],  # Will be reconstructed
+                    estimated_impact=match.group(4),
+                ))
+            else:
+                # Fallback for subtasks without metadata
+                from app.orchestrator.smart_decomposer import ProblemDomain
+                enhanced_specs.append(SubtaskSpec(
+                    title=st.title,
+                    description=st.description or "",
+                    capability="code",
+                    domain=ProblemDomain.GENERAL,
+                    complexity="powerful",
+                    recommended_model="sonnet-4-5",
+                    depends_on=[],
+                    estimated_impact="medium",
+                ))
+
+        # Get parallel batches
+        model_router = ModelRouter()
+        planner_name = select_agent("plan", self.adapters)
+        planner = self.adapters.get(planner_name)
+        smart_decomposer = SmartDecomposer(planner, model_router)
+        batches = smart_decomposer.get_parallel_batches(enhanced_specs)
+
+        # Filter batches if specific indices requested
+        if batch_indices is not None:
+            indices_set = set(batch_indices)
+            batches = [[i for i in batch if i in indices_set] for batch in batches]
+            batches = [b for b in batches if b]  # Remove empty batches
+
+        # Execute batches sequentially, tasks within each batch in parallel
+        batches_completed = 0
+        subtasks_run = []
+
+        for batch_idx, batch in enumerate(batches):
+            logger.info(f"Starting batch {batch_idx + 1}/{len(batches)}: {batch}")
+
+            # Run tasks in this batch concurrently
+            tasks_to_run = [subtasks[i] for i in batch]
+            run_tasks = []
+
+            for subtask in tasks_to_run:
+                # Skip if already completed or running
+                if subtask.status in [TaskStatus.merged, TaskStatus.awaiting_approval]:
+                    logger.info(f"Skipping subtask {subtask.id} (status: {subtask.status})")
+                    continue
+
+                logger.info(f"Starting subtask {subtask.id}: {subtask.title}")
+                run_tasks.append(self.run_task(subtask.id))
+                subtasks_run.append(subtask.id)
+
+            # Wait for all tasks in batch to complete
+            if run_tasks:
+                await asyncio.gather(*run_tasks, return_exceptions=True)
+
+            batches_completed += 1
+            logger.info(f"Batch {batch_idx + 1} completed")
+
+        # Analyze conflicts after all batches complete
+        diffs = []
+        for subtask in subtasks:
+            with Session(self.engine) as s:
+                latest_run = s.exec(
+                    select(models.Run)
+                    .where(models.Run.task_id == subtask.id)
+                    .order_by(models.Run.id.desc())
+                ).first()
+                if latest_run and latest_run.diff_ref:
+                    diff_content = memory.load_diff(latest_run.diff_ref)
+                    if diff_content:
+                        diffs.append(diff_content)
+
+        conflicts = ResultMerger.analyze_conflicts(diffs, enhanced_specs)
+
+        return {
+            "batches_completed": batches_completed,
+            "subtasks_run": subtasks_run,
+            "conflicts_detected": [
+                {
+                    "file_path": c.file_path,
+                    "subtask_indices": c.subtask_indices,
+                    "severity": c.severity,
+                    "description": c.description,
+                }
+                for c in conflicts
+            ],
+        }
+
+    def get_merge_strategy(self, parent_task_id: int) -> dict:
+        """Analyze subtask results and suggest merge strategy.
+
+        Returns:
+            {
+                "strategy": "auto" | "sequential" | "manual",
+                "order": [subtask_ids] if sequential,
+                "conflicts": list of conflict descriptions,
+                "recommendation": str,
+            }
+        """
+        with Session(self.engine) as s:
+            subtasks = list(s.exec(
+                select(models.Task)
+                .where(models.Task.parent_id == parent_task_id)
+                .order_by(models.Task.id)
+            ))
+
+        if not subtasks:
+            return {
+                "strategy": "auto",
+                "conflicts": [],
+                "recommendation": "No subtasks to merge",
+            }
+
+        # Get diffs and specs
+        diffs = []
+        enhanced_specs = []
+
+        for st in subtasks:
+            with Session(self.engine) as s:
+                latest_run = s.exec(
+                    select(models.Run)
+                    .where(models.Run.task_id == st.id)
+                    .order_by(models.Run.id.desc())
+                ).first()
+                if latest_run and latest_run.diff_ref:
+                    diff_content = memory.load_diff(latest_run.diff_ref)
+                    if diff_content:
+                        diffs.append(diff_content)
+                    else:
+                        diffs.append("")
+                else:
+                    diffs.append("")
+
+            # Parse metadata
+            import re
+            match = re.search(
+                r'\[Metadata: domain=(\w+), complexity=(\w+), model=([\w\-\.]+), impact=(\w+)\]',
+                st.description or ""
+            )
+            if match:
+                from app.orchestrator.smart_decomposer import ProblemDomain
+                enhanced_specs.append(SubtaskSpec(
+                    title=st.title,
+                    description=st.description,
+                    capability="code",
+                    domain=ProblemDomain(match.group(1)),
+                    complexity=match.group(2),
+                    recommended_model=match.group(3),
+                    depends_on=[],
+                    estimated_impact=match.group(4),
+                ))
+            else:
+                from app.orchestrator.smart_decomposer import ProblemDomain
+                enhanced_specs.append(SubtaskSpec(
+                    title=st.title,
+                    description=st.description or "",
+                    capability="code",
+                    domain=ProblemDomain.GENERAL,
+                    complexity="powerful",
+                    recommended_model="sonnet-4-5",
+                    depends_on=[],
+                    estimated_impact="medium",
+                ))
+
+        # Analyze conflicts
+        conflicts = ResultMerger.analyze_conflicts(diffs, enhanced_specs)
+        strategy = ResultMerger.suggest_merge_strategy(conflicts, enhanced_specs)
+
+        # Convert subtask indices to IDs
+        if "order" in strategy:
+            strategy["order"] = [subtasks[i].id for i in strategy["order"]]
+
+        return strategy
