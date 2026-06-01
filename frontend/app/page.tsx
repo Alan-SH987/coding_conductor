@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { api, type Project } from "@/lib/api";
 import { Button, Card, Input } from "@/components/ui";
@@ -13,17 +13,17 @@ export default function HomePage() {
   const [busy, setBusy] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
 
-  async function load() {
+  const load = useCallback(async () => {
     try {
       setProjects(await api.listProjects(showArchived));
     } catch (e) {
       setError(String(e));
     }
-  }
+  }, [showArchived]);
 
   useEffect(() => {
     load();
-  }, [showArchived]);
+  }, [load]);
 
   async function onCreate(e: React.FormEvent) {
     e.preventDefault();

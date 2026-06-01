@@ -494,7 +494,18 @@ class Orchestrator:
             proj = s.get(models.Project, project_id)
             if proj is None or proj.deleted_at is not None:
                 return None
-            proj.deleted_at = datetime.now(timezone.utc)
+            now = datetime.now(timezone.utc)
+            proj.deleted_at = now
+            # Cascade soft-delete to all tasks belonging to this project
+            tasks = s.exec(
+                select(models.Task).where(
+                    models.Task.project_id == project_id,
+                    models.Task.deleted_at.is_(None),
+                )
+            ).all()
+            for task in tasks:
+                task.deleted_at = now
+                s.add(task)
             s.add(proj)
             s.commit()
             s.refresh(proj)
@@ -503,9 +514,9 @@ class Orchestrator:
     # ---------- reads ----------
     def list_projects(self, include_archived: bool = False) -> list[models.Project]:
         with Session(self.engine) as s:
-            query = select(models.Project).where(models.Project.deleted_at == None)
+            query = select(models.Project).where(models.Project.deleted_at.is_(None))
             if not include_archived:
-                query = query.where(models.Project.is_archived == False)
+                query = query.where(models.Project.is_archived.is_(False))
             query = query.order_by(models.Project.is_pinned.desc(), models.Project.id)
             return list(s.exec(query).all())
 
@@ -521,14 +532,20 @@ class Orchestrator:
             return list(
                 s.exec(
                     select(models.Task)
-                    .where(models.Task.project_id == project_id)
+                    .where(
+                        models.Task.project_id == project_id,
+                        models.Task.deleted_at.is_(None),
+                    )
                     .order_by(models.Task.id)
                 ).all()
             )
 
     def get_task(self, task_id: int) -> Optional[models.Task]:
         with Session(self.engine) as s:
-            return s.get(models.Task, task_id)
+            task = s.get(models.Task, task_id)
+            if task is None or task.deleted_at is not None:
+                return None
+            return task
 
     def list_runs(self, task_id: int) -> list[models.Run]:
         with Session(self.engine) as s:

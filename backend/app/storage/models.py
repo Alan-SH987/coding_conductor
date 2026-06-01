@@ -49,6 +49,7 @@ class Task(SQLModel, table=True):
     assigned_agent: Optional[str] = None
     branch: Optional[str] = None
     worktree_path: Optional[str] = None
+    deleted_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
