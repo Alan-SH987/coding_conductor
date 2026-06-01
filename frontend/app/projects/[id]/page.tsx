@@ -217,6 +217,9 @@ export default function ProjectPage({
         } else {
           setError(res.verify_output || "merge failed");
         }
+      } else {
+        // Close the panel if merge was successful
+        setPanel(null);
       }
       await load();
     } catch (e) {
