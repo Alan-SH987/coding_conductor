@@ -40,6 +40,9 @@ class Project(SQLModel, table=True):
     # Quota management (single-user, project-level)
     quota_tokens: Optional[int] = None  # Max tokens allowed (None = unlimited)
     quota_cost_usd: Optional[float] = None  # Max cost in USD (None = unlimited)
+    # Pre-merge gate: a shell command run in the repo working dir against the
+    # merged result before a task is committed to main. None = no gate.
+    verify_cmd: Optional[str] = None
 
 
 class Task(SQLModel, table=True):

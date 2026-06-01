@@ -14,6 +14,7 @@ export interface Project {
   is_archived: boolean;
   deleted_at: string | null;
   created_at: string;
+  verify_cmd: string | null;
 }
 
 export type TaskStatus =
@@ -76,6 +77,8 @@ export interface ApproveResult {
   merged_sha: string | null;
   conflict: boolean;
   conflicted_files: string[];
+  verify_failed: boolean;
+  verify_output: string;
   task: Task;
 }
 
@@ -141,6 +144,9 @@ const post = <T>(path: string, body?: unknown) =>
 const del = <T>(path: string) =>
   http<T>(path, { method: "DELETE" });
 
+const patch = <T>(path: string, body?: unknown) =>
+  http<T>(path, { method: "PATCH", body: body ? JSON.stringify(body) : undefined });
+
 // ---------- endpoints ----------
 export const api = {
   listAgents: () => http<Agent[]>("/agents"),
@@ -155,6 +161,8 @@ export const api = {
   archiveProject: (id: number) => post<Project>(`/projects/${id}/archive`),
   unarchiveProject: (id: number) => post<Project>(`/projects/${id}/unarchive`),
   deleteProject: (id: number) => del<Project>(`/projects/${id}`),
+  updateProjectVerify: (id: number, verifyCmd: string | null) =>
+    patch<Project>(`/projects/${id}/verify`, { verify_cmd: verifyCmd }),
 
   listTasks: (projectId: number) =>
     http<Task[]>(`/projects/${projectId}/tasks`),

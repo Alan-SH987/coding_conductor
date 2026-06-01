@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
@@ -156,6 +157,23 @@ def update_project_quotas(
 ):
     """Update quota settings for a project."""
     proj = orch.update_project_quotas(project_id, body.quota_tokens, body.quota_cost_usd)
+    if proj is None:
+        raise HTTPException(404, f"project {project_id} not found")
+    return proj
+
+
+class VerifyUpdate(BaseModel):
+    verify_cmd: Optional[str] = None
+
+
+@router.patch("/projects/{project_id}/verify", response_model=models.Project)
+def update_project_verify(
+    project_id: int,
+    body: VerifyUpdate,
+    orch: Orchestrator = Depends(get_orchestrator),
+):
+    """Set or clear the pre-merge verify command run before a task merges."""
+    proj = orch.update_project_verify(project_id, body.verify_cmd)
     if proj is None:
         raise HTTPException(404, f"project {project_id} not found")
     return proj
@@ -416,6 +434,8 @@ def approve_task(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
         "merged_sha": res.merged_sha,
         "conflict": res.conflict,
         "conflicted_files": res.conflicted_files,
+        "verify_failed": res.verify_failed,
+        "verify_output": res.verify_output,
         "task": orch.get_task(task_id),
     }
 

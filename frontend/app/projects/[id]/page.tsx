@@ -37,6 +37,12 @@ export default function ProjectPage({
   const [liveEvents, setLiveEvents] = useState<ApiEvent[]>([]);
   // Which verbose view (if any) is open in the right-side drawer.
   const [panel, setPanel] = useState<PanelState | null>(null);
+  // Pre-merge verify gate: output of the last failed approve + the inline editor
+  // for the project's verify command.
+  const [verifyFail, setVerifyFail] = useState<{ taskId: number; output: string } | null>(null);
+  const [editingVerify, setEditingVerify] = useState(false);
+  const [verifyDraft, setVerifyDraft] = useState("");
+  const [savingVerify, setSavingVerify] = useState(false);
   // Bumped on every reload so the right-side panel re-fetches instead of showing
   // stale diff/review/activity data after a run finishes or a merge lands.
   const [reloadNonce, setReloadNonce] = useState(0);
@@ -193,17 +199,42 @@ export default function ProjectPage({
 
   async function onApprove(id: number) {
     setError(null);
+    setVerifyFail(null);
     setBusyTaskId(id);
     try {
       const res = await api.approve(id);
-      if (!res.ok && res.conflict) {
-        setError(`merge conflict: ${res.conflicted_files.join(", ")}`);
+      if (!res.ok) {
+        if (res.conflict) {
+          setError(`merge conflict: ${res.conflicted_files.join(", ")}`);
+        } else if (res.verify_failed) {
+          // Gate blocked it: the merge was aborted, main is untouched, and the
+          // task stays at awaiting_approval so it can be revised and retried.
+          setVerifyFail({ taskId: id, output: res.verify_output });
+          setError("verify failed — merge aborted, nothing landed on main.");
+        } else {
+          setError(res.verify_output || "merge failed");
+        }
       }
       await load();
     } catch (e) {
       setError(String(e));
     } finally {
       setBusyTaskId(null);
+    }
+  }
+
+  async function saveVerify() {
+    setSavingVerify(true);
+    setError(null);
+    try {
+      const cmd = verifyDraft.trim();
+      const updated = await api.updateProjectVerify(projectId, cmd || null);
+      setProject(updated);
+      setEditingVerify(false);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingVerify(false);
     }
   }
 
@@ -249,6 +280,48 @@ export default function ProjectPage({
             <h1 className="truncate text-lg font-semibold">
               {project?.name ?? `Project ${projectId}`}
             </h1>
+            <div className="ml-auto flex items-center gap-2 text-xs">
+              {editingVerify ? (
+                <>
+                  <input
+                    value={verifyDraft}
+                    onChange={(e) => setVerifyDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") saveVerify();
+                      if (e.key === "Escape") setEditingVerify(false);
+                    }}
+                    placeholder="e.g. cd frontend && npm run build"
+                    className="w-80 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono outline-none focus:border-zinc-500"
+                    autoFocus
+                  />
+                  <Button onClick={saveVerify} disabled={savingVerify} className="px-2 py-1">
+                    {savingVerify ? "Saving…" : "Save"}
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingVerify(false)}
+                    className="text-zinc-500 hover:text-zinc-300"
+                  >
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVerifyDraft(project?.verify_cmd ?? "");
+                    setEditingVerify(true);
+                  }}
+                  title="Command run against the merged result before a task lands on main. Click to edit."
+                  className="flex max-w-md items-center gap-1.5 rounded-md border border-zinc-800 px-2 py-1 hover:border-zinc-700"
+                >
+                  <span className="text-zinc-500">verify gate:</span>
+                  <span className="truncate font-mono text-zinc-300">
+                    {project?.verify_cmd ? project.verify_cmd : "off"}
+                  </span>
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex-1 space-y-4 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
@@ -277,6 +350,27 @@ export default function ProjectPage({
           </div>
 
           {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
+
+          {verifyFail && (
+            <div className="mt-2 rounded-md border border-amber-700/60 bg-amber-950/30 px-3 py-2">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-xs font-medium text-amber-300">
+                  Verify failed for #{verifyFail.taskId} — merge aborted, main untouched
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setVerifyFail(null)}
+                  aria-label="Dismiss"
+                  className="text-amber-600 hover:text-amber-300"
+                >
+                  ✕
+                </button>
+              </div>
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs text-zinc-300">
+                {verifyFail.output || "(no output)"}
+              </pre>
+            </div>
+          )}
 
           <div className="mt-2 flex items-end gap-2">
             <textarea

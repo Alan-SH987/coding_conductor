@@ -160,28 +160,68 @@ class GitOpsEngine:
         return files
 
     def merge_to(self, handle: WorktreeHandle, target: Optional[str] = None,
-                 strategy: str = "no-ff") -> MergeResult:
+                 strategy: str = "no-ff", verify_cmd: Optional[str] = None) -> MergeResult:
         info = self.inspect_repo()
         target = target or info.default_branch
         if info.default_branch != target:
             self._git(["checkout", target])
         flag = "--no-ff" if strategy == "no-ff" else "--ff"
+        # Stage the merge but DON'T commit yet, so an optional verify command can
+        # gate it: a failing build/test aborts cleanly, leaving no commit on main.
         proc = self._git(
-            self._as_conductor(
-                ["merge", flag, handle.branch, "-m", f"conductor: merge task-{handle.task_id}"]
-            ),
+            self._as_conductor(["merge", "--no-commit", flag, handle.branch]),
             check=False,
         )
-        if proc.returncode != 0:
-            conflicted = (
-                self._git(["diff", "--name-only", "--diff-filter=U"], check=False)
-                .stdout.strip()
-                .splitlines()
-            )
+        conflicted = (
+            self._git(["diff", "--name-only", "--diff-filter=U"], check=False)
+            .stdout.strip()
+            .splitlines()
+        )
+        if conflicted:
             self._git(["merge", "--abort"], check=False)
             return MergeResult(ok=False, merged_sha=None, conflict=True, conflicted_files=conflicted)
+        # MERGE_HEAD is set while a --no-commit merge is pending. Absent + rc!=0
+        # means the merge never started (e.g. dirty tree); absent + rc==0 means
+        # the branch was already up to date (a no-op, nothing to commit).
+        merging = self._git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], check=False).returncode == 0
+        if not merging and proc.returncode != 0:
+            return MergeResult(ok=False, merged_sha=None, conflict=False, verify_output=proc.stderr.strip())
+        if verify_cmd and merging:
+            ok, output = self._run_verify(verify_cmd)
+            if not ok:
+                self._git(["merge", "--abort"], check=False)
+                return MergeResult(
+                    ok=False, merged_sha=None, conflict=False,
+                    verify_failed=True, verify_output=output,
+                )
+        if merging:
+            self._git(
+                self._as_conductor(["commit", "-m", f"conductor: merge task-{handle.task_id}"]),
+                check=False,
+            )
         merged_sha = self._git(["rev-parse", "HEAD"]).stdout.strip()
-        return MergeResult(ok=True, merged_sha=merged_sha, conflict=False, conflicted_files=[])
+        return MergeResult(ok=True, merged_sha=merged_sha, conflict=False)
+
+    def _run_verify(self, cmd: str, timeout: int = 600) -> tuple[bool, str]:
+        """Run an operator-configured verify command in the main repo working dir.
+
+        It runs HERE (not in a worktree) because that is the only checkout with
+        dependencies installed — a fresh worktree has no node_modules/.venv, so a
+        build/test would spuriously fail. ``shell=True`` so compound commands like
+        ``cd frontend && npm run build`` work. The command is configured by the
+        repo operator (trusted, CI-script equivalent), not from untrusted input.
+        """
+        try:
+            proc = subprocess.run(
+                cmd, shell=True, cwd=str(self.repo_path),
+                capture_output=True, text=True, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return False, f"verify command timed out after {timeout}s: {cmd}"
+        out = (proc.stdout or "") + (proc.stderr or "")
+        if len(out) > 16000:
+            out = "…(truncated)…\n" + out[-16000:]
+        return proc.returncode == 0, out.strip()
 
     def remove_worktree(self, handle: WorktreeHandle, force: bool = True) -> None:
         args = ["worktree", "remove"]

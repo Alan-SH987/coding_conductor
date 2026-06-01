@@ -562,6 +562,20 @@ class Orchestrator:
             s.refresh(proj)
             return proj
 
+    def update_project_verify(
+        self, project_id: int, verify_cmd: Optional[str]
+    ) -> Optional[models.Project]:
+        """Set (or clear, when falsy) the pre-merge verify command."""
+        with Session(self.engine) as s:
+            proj = s.get(models.Project, project_id)
+            if proj is None or proj.deleted_at is not None:
+                return None
+            proj.verify_cmd = verify_cmd or None
+            s.add(proj)
+            s.commit()
+            s.refresh(proj)
+            return proj
+
     def get_project_usage(self, project_id: int) -> dict:
         """Calculate total usage (tokens and cost) for a project."""
         with Session(self.engine) as s:
@@ -653,10 +667,15 @@ class Orchestrator:
     def approve_task(self, task_id: int):
         task, project = self._task_and_project(task_id)
         git = GitOpsEngine(project.path)
-        res = git.merge_to(self._handle_from_task(task))
+        res = git.merge_to(self._handle_from_task(task), verify_cmd=project.verify_cmd)
         if res.ok:
             git.remove_worktree(self._handle_from_task(task))
             self._update_task(task_id, status=TaskStatus.merged.value)
+        elif res.verify_failed:
+            # Build/test gate failed — the merge was aborted, nothing landed on
+            # main. Leave the task at awaiting_approval (worktree intact) so the
+            # human can revise and retry rather than losing the gate state.
+            pass
         else:
             self._update_task(task_id, status=TaskStatus.failed.value)
         return res

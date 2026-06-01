@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -41,4 +41,7 @@ class MergeResult:
     ok: bool
     merged_sha: str | None
     conflict: bool
-    conflicted_files: list[str]
+    conflicted_files: list[str] = field(default_factory=list)
+    # Pre-merge verify gate outcome (only meaningful when ok is False).
+    verify_failed: bool = False
+    verify_output: str = ""
