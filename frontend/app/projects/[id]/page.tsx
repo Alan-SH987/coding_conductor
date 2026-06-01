@@ -51,10 +51,12 @@ export default function ProjectPage({
     setError(null);
     setBusy(true);
     try {
-      await api.createTask(projectId, title.trim(), description.trim(), agent);
+      const task = await api.createTask(projectId, title.trim(), description.trim(), agent);
       setTitle("");
       setDescription("");
       await load();
+      // Automatically run the task after creation
+      await api.runTask(task.id);
     } catch (e) {
       setError(String(e));
     } finally {
