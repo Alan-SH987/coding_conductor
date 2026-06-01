@@ -14,9 +14,9 @@ pip install -e ".[dev]"      # or: pip install fastapi "uvicorn[standard]" sqlmo
 ## Run
 
 ```bash
-uvicorn app.main:app --reload --port 8800
+uvicorn app.main:app --reload --port 8010
 # health check:
-curl localhost:8800/health
+curl localhost:8010/health
 ```
 
 ## Test
