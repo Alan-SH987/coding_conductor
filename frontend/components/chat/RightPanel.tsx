@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   api,
   type Event as ApiEvent,
@@ -225,12 +225,55 @@ export function RightPanel({
   onClose: () => void;
 }) {
   const open = panel !== null;
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(480); // 30rem = 480px
+  const [isResizing, setIsResizing] = useState(false);
+
+  // Auto-scroll to bottom when liveEvents updates
+  useEffect(() => {
+    if (panel?.kind === "live" && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [liveEvents, panel?.kind]);
+
+  // Handle resizing
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const newWidth = window.innerWidth - e.clientX;
+      setWidth(Math.max(300, Math.min(newWidth, window.innerWidth * 0.85)));
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizing]);
+
   return (
     <div
-      className={`absolute inset-y-0 right-0 z-20 flex w-[30rem] max-w-[85%] flex-col border-l border-zinc-800 bg-zinc-950 shadow-2xl transition-transform duration-200 ${
+      style={{ width: open ? `${width}px` : undefined }}
+      className={`absolute inset-y-0 right-0 z-20 flex flex-col border-l border-zinc-800 bg-zinc-950 shadow-2xl transition-transform duration-200 ${
         open ? "translate-x-0" : "pointer-events-none translate-x-full"
       }`}
     >
+      {/* Resize handle */}
+      {open && (
+        <div
+          onMouseDown={() => setIsResizing(true)}
+          className={`absolute left-0 top-0 h-full w-1 cursor-col-resize hover:bg-zinc-600 ${
+            isResizing ? "bg-zinc-500" : "bg-transparent"
+          }`}
+        />
+      )}
       {panel && (
         <>
           <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
@@ -249,7 +292,7 @@ export function RightPanel({
               ✕
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto px-3 py-3">
+          <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3">
             {panel.kind === "live" ? (
               <>
                 <div className="mb-2 flex items-center gap-2 text-[10px] text-zinc-500">
