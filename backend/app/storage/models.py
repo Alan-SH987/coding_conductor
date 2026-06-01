@@ -33,6 +33,9 @@ class Project(SQLModel, table=True):
     name: str
     path: str
     default_branch: str = "main"
+    is_pinned: bool = False
+    is_archived: bool = False
+    deleted_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -46,6 +49,7 @@ class Task(SQLModel, table=True):
     assigned_agent: Optional[str] = None
     branch: Optional[str] = None
     worktree_path: Optional[str] = None
+    deleted_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 

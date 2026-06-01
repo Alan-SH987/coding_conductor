@@ -8,6 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "sqlmodel>=0.0.22",
     "pydantic-settings>=2.4",
+    "alembic>=1.13",
 ]
 
 [project.optional-dependencies]
