@@ -1,7 +1,7 @@
 """File-based shared memory, co-located in each managed repo under `.conductor/`.
 
 MVP scope:
-  - ensure_conductor: idempotently scaffold .conductor/memory/* + .gitignore
+  - ensure_conductor: idempotently scaffold .conductor/memory/* + .git/info/exclude
   - build_context_bundle: read global.md to inject as system prompt (clean: does
     not write into the worktree, so it never pollutes the captured diff)
   - save_diff / read_diff: persist a task's unified diff under .conductor/diffs/
@@ -63,17 +63,27 @@ def ensure_conductor(repo_path: str | Path) -> None:
     hist = mem / "task_history.jsonl"
     if not hist.exists():
         hist.touch()
-    _ensure_gitignore(repo)
+    _ensure_git_exclude(repo)
 
 
-def _ensure_gitignore(repo: Path) -> None:
-    gi = repo / ".gitignore"
+def _ensure_git_exclude(repo: Path) -> None:
+    """Add Conductor's ignore patterns to .git/info/exclude (per-repo, untracked).
+
+    Unlike .gitignore this file is not tracked, so scaffolding never dirties the
+    work tree — which is what lets a repo's very first Run branch off a clean main.
+    """
+    git_dir = repo / ".git"
+    if not git_dir.is_dir():
+        return
+    info = git_dir / "info"
+    info.mkdir(parents=True, exist_ok=True)
+    exclude = info / "exclude"
     needed = [".cc-worktrees/", ".conductor/diffs/"]
-    existing = gi.read_text().splitlines() if gi.exists() else []
+    existing = exclude.read_text().splitlines() if exclude.exists() else []
     missing = [n for n in needed if n not in existing]
     if not missing:
         return
-    with gi.open("a") as fh:
+    with exclude.open("a") as fh:
         if existing and existing[-1].strip():
             fh.write("\n")
         fh.write("\n".join(missing) + "\n")

@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from app import memory
 from app.gitops import DirtyRepoError, GitOpsEngine, NotAGitRepo
 
 
@@ -56,6 +57,35 @@ def test_dirty_repo_rejected(repo):
     (repo / "README.md").write_text("uncommitted change\n")
     with pytest.raises(DirtyRepoError):
         GitOpsEngine(repo).create_worktree("1")
+
+
+def test_first_run_scaffold_stays_clean(repo):
+    """回归：在已提交 .gitignore 的仓库上首次 scaffold 不应弄脏工作区。
+
+    旧 bug：ensure_conductor 往受版本控制的 .gitignore 追加忽略规则，使主仓库变 dirty，
+    首个 Run 的 create_worktree 直接抛 DirtyRepoError（0 runs）。修复后忽略规则写入
+    .git/info/exclude（不被跟踪），工作区保持干净。
+    """
+    # A pre-committed .gitignore that lacks Conductor's patterns (the trigger case).
+    (repo / ".gitignore").write_text("__pycache__/\n")
+    _run(["git", "add", "-A"], repo)
+    _run(["git", "commit", "-m", "add gitignore"], repo)
+
+    memory.ensure_conductor(repo)
+
+    # The tracked .gitignore must be untouched -> work tree stays clean.
+    assert (repo / ".gitignore").read_text() == "__pycache__/\n"
+    assert GitOpsEngine(repo).inspect_repo().is_dirty is False
+
+    # Patterns landed in the per-repo, untracked exclude file instead.
+    exclude = (repo / ".git" / "info" / "exclude").read_text()
+    assert ".conductor/diffs/" in exclude
+    assert ".cc-worktrees/" in exclude
+
+    # And the very first Run can now branch off a clean main without raising.
+    h = GitOpsEngine(repo).create_worktree("1")
+    assert Path(h.path).exists()
+    GitOpsEngine(repo).remove_worktree(h)
 
 
 def test_empty_diff(repo):
