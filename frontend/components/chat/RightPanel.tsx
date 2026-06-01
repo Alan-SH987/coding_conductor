@@ -247,7 +247,13 @@ export function RightPanel({
 
     const handleMouseUp = () => {
       setIsResizing(false);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
     };
+
+    // Prevent text selection during resize
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
 
     document.addEventListener("mousemove", handleMouseMove);
     document.addEventListener("mouseup", handleMouseUp);
@@ -255,6 +261,8 @@ export function RightPanel({
     return () => {
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
     };
   }, [isResizing]);
 
@@ -268,7 +276,10 @@ export function RightPanel({
       {/* Resize handle */}
       {open && (
         <div
-          onMouseDown={() => setIsResizing(true)}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            setIsResizing(true);
+          }}
           className={`absolute left-0 top-0 h-full w-1.5 cursor-col-resize transition-colors ${
             isResizing ? "bg-blue-500" : "bg-transparent hover:bg-zinc-600"
           }`}
