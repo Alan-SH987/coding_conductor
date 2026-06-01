@@ -11,6 +11,11 @@ import {
 import { Button } from "@/components/ui";
 import { ProjectSidebar } from "@/components/chat/ProjectSidebar";
 import { ConversationTurn } from "@/components/chat/ConversationTurn";
+import {
+  RightPanel,
+  type PanelKind,
+  type PanelState,
+} from "@/components/chat/RightPanel";
 
 export default function ProjectPage({
   params,
@@ -30,8 +35,10 @@ export default function ProjectPage({
   const [busyTaskId, setBusyTaskId] = useState<number | null>(null);
   const [streamingTaskId, setStreamingTaskId] = useState<number | null>(null);
   const [liveEvents, setLiveEvents] = useState<ApiEvent[]>([]);
-  // Bumped on every reload so conversation turns remount and re-fetch their
-  // collapsibles (otherwise a lazy card would cache stale diff/review data).
+  // Which verbose view (if any) is open in the right-side drawer.
+  const [panel, setPanel] = useState<PanelState | null>(null);
+  // Bumped on every reload so the right-side panel re-fetches instead of showing
+  // stale diff/review/activity data after a run finishes or a merge lands.
   const [reloadNonce, setReloadNonce] = useState(0);
 
   const esRef = useRef<EventSource | null>(null);
@@ -50,6 +57,20 @@ export default function ProjectPage({
     setAgents(a);
     setReloadNonce((n) => n + 1);
     return t;
+  }
+
+  function openPanel(kind: PanelKind, taskId: number) {
+    setPanel({ kind, taskId });
+  }
+
+  // When a stream ends, a "live" panel has nothing more to show — fold it into
+  // the persisted "activity" view for the same task so the drawer stays useful.
+  function endLivePanel(taskId: number) {
+    setPanel((prev) =>
+      prev?.kind === "live" && prev.taskId === taskId
+        ? { kind: "activity", taskId }
+        : prev,
+    );
   }
 
   // Tail the latest run of `taskId`. The backend replays from seq 0, so a fresh
@@ -76,6 +97,7 @@ export default function ProjectPage({
       if (esRef.current === es) esRef.current = null;
       setStreamingTaskId(null);
       setLiveEvents([]);
+      endLivePanel(taskId);
       try {
         await load();
       } catch (err) {
@@ -90,6 +112,7 @@ export default function ProjectPage({
       setError("stream disconnected");
       setStreamingTaskId(null);
       setLiveEvents([]);
+      endLivePanel(taskId);
       try {
         await load();
       } catch {
@@ -105,7 +128,10 @@ export default function ProjectPage({
         const t = await load();
         if (cancelled) return;
         const running = t.find((x) => x.status === "running");
-        if (running) openStream(running.id);
+        if (running) {
+          openStream(running.id);
+          openPanel("live", running.id);
+        }
       } catch (e) {
         if (!cancelled) setError(String(e));
       }
@@ -143,6 +169,7 @@ export default function ProjectPage({
       await load();
       await api.runTask(task.id);
       openStream(task.id);
+      openPanel("live", task.id);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -156,6 +183,7 @@ export default function ProjectPage({
     try {
       await api.runTask(id);
       openStream(id);
+      openPanel("live", id);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -198,6 +226,7 @@ export default function ProjectPage({
     try {
       await api.reviewTask(id);
       await load();
+      openPanel("review", id);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -214,68 +243,79 @@ export default function ProjectPage({
     <div className="flex h-[calc(100vh-9rem)] gap-4">
       <ProjectSidebar projects={projects} currentId={projectId} />
 
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <div className="mb-2 flex items-center gap-3">
-          <h1 className="truncate text-lg font-semibold">
-            {project?.name ?? `Project ${projectId}`}
-          </h1>
+      <div className="relative flex flex-1 overflow-hidden">
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <div className="mb-2 flex items-center gap-3">
+            <h1 className="truncate text-lg font-semibold">
+              {project?.name ?? `Project ${projectId}`}
+            </h1>
+          </div>
+
+          <div className="flex-1 space-y-4 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
+            {tasks.length === 0 ? (
+              <p className="text-sm text-zinc-500">
+                No tasks yet. Send a message below to create one.
+              </p>
+            ) : (
+              tasks.map((t) => (
+                <ConversationTurn
+                  key={`${t.id}:${reloadNonce}`}
+                  task={t}
+                  hasChildren={childParentIds.has(t.id)}
+                  streaming={streamingTaskId === t.id}
+                  busy={busyTaskId === t.id}
+                  activeKind={panel?.taskId === t.id ? panel.kind : null}
+                  onRun={onRun}
+                  onReview={onReview}
+                  onApprove={onApprove}
+                  onReject={onReject}
+                  onOpenPanel={openPanel}
+                />
+              ))
+            )}
+            <div ref={bottomRef} />
+          </div>
+
+          {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
+
+          <div className="mt-2 flex items-end gap-2">
+            <textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  onSend();
+                }
+              }}
+              rows={2}
+              placeholder="Describe a task…  (Enter to send, Shift+Enter for newline)"
+              className="flex-1 resize-none rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-zinc-500"
+            />
+            <select
+              value={agent}
+              onChange={(e) => setAgent(e.target.value)}
+              className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm outline-none focus:border-zinc-500"
+            >
+              {realAgents.map((a) => (
+                <option key={a.name} value={a.name}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+            <Button onClick={onSend} disabled={sending || !message.trim()} className="px-4">
+              {sending ? "Sending…" : "Send"}
+            </Button>
+          </div>
         </div>
 
-        <div className="flex-1 space-y-4 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
-          {tasks.length === 0 ? (
-            <p className="text-sm text-zinc-500">
-              No tasks yet. Send a message below to create one.
-            </p>
-          ) : (
-            tasks.map((t) => (
-              <ConversationTurn
-                key={`${t.id}:${reloadNonce}`}
-                task={t}
-                hasChildren={childParentIds.has(t.id)}
-                streaming={streamingTaskId === t.id}
-                liveEvents={streamingTaskId === t.id ? liveEvents : []}
-                busy={busyTaskId === t.id}
-                onRun={onRun}
-                onReview={onReview}
-                onApprove={onApprove}
-                onReject={onReject}
-              />
-            ))
-          )}
-          <div ref={bottomRef} />
-        </div>
-
-        {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
-
-        <div className="mt-2 flex items-end gap-2">
-          <textarea
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                onSend();
-              }
-            }}
-            rows={2}
-            placeholder="Describe a task…  (Enter to send, Shift+Enter for newline)"
-            className="flex-1 resize-none rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-zinc-500"
-          />
-          <select
-            value={agent}
-            onChange={(e) => setAgent(e.target.value)}
-            className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm outline-none focus:border-zinc-500"
-          >
-            {realAgents.map((a) => (
-              <option key={a.name} value={a.name}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-          <Button onClick={onSend} disabled={sending || !message.trim()} className="px-4">
-            {sending ? "Sending…" : "Send"}
-          </Button>
-        </div>
+        <RightPanel
+          panel={panel}
+          liveEvents={liveEvents}
+          streaming={panel?.kind === "live" && streamingTaskId === panel.taskId}
+          reloadNonce={reloadNonce}
+          onClose={() => setPanel(null)}
+        />
       </div>
     </div>
   );

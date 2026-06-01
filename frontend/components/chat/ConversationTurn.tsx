@@ -1,86 +1,60 @@
 "use client";
 
 import Link from "next/link";
-import {
-  api,
-  type Event as ApiEvent,
-  type Review,
-  type Run,
-  type Task,
-} from "@/lib/api";
+import { type Task } from "@/lib/api";
 import { Badge, Button } from "@/components/ui";
-import { Collapsible, DiffView } from "@/components/chat/Collapsible";
+import type { PanelKind } from "@/components/chat/RightPanel";
 
-interface RunWithEvents extends Run {
-  events: ApiEvent[];
-}
-
-const EVENT_COLOR: Record<string, string> = {
-  meta: "text-zinc-500",
-  message: "text-zinc-100",
-  thinking: "text-indigo-300",
-  tool_use: "text-blue-300",
-  tool_result: "text-zinc-400",
-  final: "text-green-300",
-  cost: "text-zinc-500",
-  error: "text-red-400",
-  diff_ready: "text-zinc-500",
-};
-
-function eventDetail(json: string): string {
-  try {
-    const p = JSON.parse(json);
-    return p.text ?? (p.data ? JSON.stringify(p.data) : "");
-  } catch {
-    return "";
-  }
-}
-
-function EventLog({ events }: { events: ApiEvent[] }) {
-  if (events.length === 0) {
-    return <div className="text-xs text-zinc-600">No events.</div>;
-  }
+function PanelChip({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
   return (
-    <div className="space-y-1 font-mono text-xs">
-      {events.map((ev) => (
-        <div key={ev.id} className="flex gap-2">
-          <span className="shrink-0 text-zinc-600">{ev.type}</span>
-          <span
-            className={`whitespace-pre-wrap break-words ${
-              EVENT_COLOR[ev.type] ?? "text-zinc-300"
-            }`}
-          >
-            {eventDetail(ev.payload_json)}
-          </span>
-        </div>
-      ))}
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-md border px-2 py-1 text-xs transition-colors ${
+        active
+          ? "border-zinc-600 bg-zinc-800 text-zinc-100"
+          : "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+      }`}
+    >
+      {label}
+    </button>
   );
 }
 
 // One task rendered as a conversation turn: a right-aligned "user" bubble (the
-// prompt) and a left-aligned "assistant" block (status, inline actions, live
-// stream while running, and lazy-loaded Activity / Diff / Review cards).
+// prompt) and a left-aligned "assistant" block (status + inline actions). All
+// verbose output (live stream, activity, diff, review) opens in the right-side
+// drawer via onOpenPanel instead of expanding inline, keeping the column lean.
 export function ConversationTurn({
   task,
   hasChildren,
   streaming,
-  liveEvents,
   busy,
+  activeKind,
   onRun,
   onReview,
   onApprove,
   onReject,
+  onOpenPanel,
 }: {
   task: Task;
   hasChildren: boolean;
   streaming: boolean;
-  liveEvents: ApiEvent[];
   busy: boolean;
+  activeKind: PanelKind | null;
   onRun: (id: number) => void;
   onReview: (id: number) => void;
   onApprove: (id: number) => void;
   onReject: (id: number) => void;
+  onOpenPanel: (kind: PanelKind, taskId: number) => void;
 }) {
   const canRun =
     (task.status === "draft" || task.status === "failed") && !hasChildren;
@@ -147,7 +121,7 @@ export function ConversationTurn({
                   onClick={() => onReview(task.id)}
                   disabled={busy}
                 >
-                  AI Review
+                  Run AI review
                 </Button>
                 <Button
                   variant="ghost"
@@ -168,108 +142,44 @@ export function ConversationTurn({
           </div>
         )}
 
-        {streaming && (
-          <div className="rounded-md border border-zinc-800 bg-zinc-950/60 px-3 py-2">
-            <div className="mb-1 flex items-center gap-2 text-[10px] text-zinc-500">
-              <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-green-400" />
-              live
-            </div>
-            {liveEvents.length === 0 ? (
-              <div className="text-xs text-zinc-600">
-                waiting for first event…
-              </div>
-            ) : (
-              <EventLog events={liveEvents} />
+        {(streaming || showActivity || showDiff || showReview) && (
+          <div className="flex flex-wrap gap-2">
+            {streaming && (
+              <button
+                type="button"
+                onClick={() => onOpenPanel("live", task.id)}
+                className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors ${
+                  activeKind === "live"
+                    ? "border-green-700 bg-green-950/40 text-green-300"
+                    : "border-zinc-800 bg-zinc-900/40 text-zinc-300 hover:border-zinc-700"
+                }`}
+              >
+                <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-green-400" />
+                Live
+              </button>
+            )}
+            {showActivity && (
+              <PanelChip
+                label="Activity"
+                active={activeKind === "activity"}
+                onClick={() => onOpenPanel("activity", task.id)}
+              />
+            )}
+            {showDiff && (
+              <PanelChip
+                label="Diff"
+                active={activeKind === "diff"}
+                onClick={() => onOpenPanel("diff", task.id)}
+              />
+            )}
+            {showReview && (
+              <PanelChip
+                label="AI Review"
+                active={activeKind === "review"}
+                onClick={() => onOpenPanel("review", task.id)}
+              />
             )}
           </div>
-        )}
-
-        {showActivity && (
-          <Collapsible
-            title="Activity"
-            loader={async () => {
-              const runs = await api.listRuns(task.id);
-              return Promise.all(
-                runs.map(async (r) => ({
-                  ...r,
-                  events: await api.listEvents(r.id),
-                })),
-              );
-            }}
-          >
-            {(runs: RunWithEvents[]) =>
-              runs.length === 0 ? (
-                <div className="text-xs text-zinc-600">No runs yet.</div>
-              ) : (
-                <div className="space-y-3">
-                  {runs.map((r) => (
-                    <div key={r.id}>
-                      <div className="mb-1 flex items-center justify-between text-[10px] text-zinc-500">
-                        <span>
-                          run #{r.id} · {r.agent}
-                        </span>
-                        <span>
-                          {r.tokens_in}/{r.tokens_out} tok · $
-                          {r.cost.toFixed(4)}
-                        </span>
-                      </div>
-                      <EventLog events={r.events} />
-                    </div>
-                  ))}
-                </div>
-              )
-            }
-          </Collapsible>
-        )}
-
-        {showDiff && (
-          <Collapsible
-            title="Diff"
-            loader={async () => (await api.getDiff(task.id)).diff}
-          >
-            {(diff: string) => <DiffView diff={diff} />}
-          </Collapsible>
-        )}
-
-        {showReview && (
-          <Collapsible title="AI Review" loader={() => api.getReview(task.id)}>
-            {(review: Review | null) =>
-              review === null ? (
-                <div className="text-xs text-zinc-600">No review yet.</div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-xs text-zinc-500">
-                    <span>{review.agent}</span>
-                    <Badge status={review.verdict} />
-                  </div>
-                  {review.summary && (
-                    <p className="whitespace-pre-wrap text-sm text-zinc-300">
-                      {review.summary}
-                    </p>
-                  )}
-                  {review.findings.length === 0 ? (
-                    <div className="text-xs text-zinc-600">No findings.</div>
-                  ) : (
-                    <ul className="space-y-1">
-                      {review.findings.map((f, i) => (
-                        <li key={i} className="flex gap-2 text-sm">
-                          <Badge status={f.severity} />
-                          <span className="text-zinc-300">
-                            {f.file && (
-                              <span className="font-mono text-xs text-zinc-500">
-                                {f.file}:{" "}
-                              </span>
-                            )}
-                            {f.comment}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )
-            }
-          </Collapsible>
         )}
       </div>
     </div>
