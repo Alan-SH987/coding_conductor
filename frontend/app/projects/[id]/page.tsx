@@ -161,11 +161,9 @@ export default function ProjectPage({
   }, [agents]);
 
   useEffect(() => {
-    // Only auto-scroll when new content is added, not when streaming ends
-    if (streamingTaskId !== null) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [tasks.length, liveEvents.length, streamingTaskId]);
+    // Auto-scroll when tasks update or live events change
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [tasks.length, liveEvents.length]);
 
   async function onSend() {
     const title = message.trim();
