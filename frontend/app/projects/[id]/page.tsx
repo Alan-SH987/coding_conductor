@@ -161,7 +161,10 @@ export default function ProjectPage({
   }, [agents]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    // Only auto-scroll when new content is added, not when streaming ends
+    if (streamingTaskId !== null) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [tasks.length, liveEvents.length, streamingTaskId]);
 
   async function onSend() {
