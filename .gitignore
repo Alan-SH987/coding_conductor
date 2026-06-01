@@ -17,11 +17,14 @@ build/
 # Conductor runtime
 *.db
 *.sqlite3
+*.db.bak
+.conductor/
 .cc-worktrees/
+
+# Claude Code runtime
+.claude/*.lock
 
 # OS / editor
 .DS_Store
 .idea/
 .vscode/
-
-.conductor/diffs/
