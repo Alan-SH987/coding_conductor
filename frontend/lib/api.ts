@@ -98,6 +98,22 @@ export interface Review {
   created_at: string;
 }
 
+export interface NextStepsResponse {
+  task: Task;
+  parent: Task | null;
+  pending_tasks: Task[];
+  sibling_tasks: Task[];
+}
+
+export interface TaskSuggestion {
+  id: number;
+  task_id: number;
+  suggested_task_ids: string;
+  selected_task_ids: string;
+  action_taken: string | null;
+  created_at: string;
+}
+
 // ---------- transport ----------
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -163,4 +179,17 @@ export const api = {
 
   listRuns: (taskId: number) => http<Run[]>(`/tasks/${taskId}/runs`),
   listEvents: (runId: number) => http<Event[]>(`/runs/${runId}/events`),
+
+  getNextSteps: (taskId: number) => http<NextStepsResponse>(`/tasks/${taskId}/next-steps`),
+  saveNextStepsChoice: (
+    taskId: number,
+    suggestedTaskIds: number[],
+    selectedTaskIds: number[],
+    action: string,
+  ) =>
+    post<TaskSuggestion>(`/tasks/${taskId}/next-steps`, {
+      suggested_task_ids: suggestedTaskIds,
+      selected_task_ids: selectedTaskIds,
+      action,
+    }),
 };

@@ -643,3 +643,66 @@ class Orchestrator:
             run.ended_at = datetime.now(timezone.utc)
             s.add(run)
             s.commit()
+
+    # ---------- next-steps suggestions ----------
+    def get_next_steps(self, task_id: int) -> dict:
+        """Get suggested next tasks to work on after completing a task."""
+        task, project = self._task_and_project(task_id)
+
+        with Session(self.engine) as s:
+            # Get all pending tasks in the project (draft or queued)
+            pending_tasks = list(
+                s.exec(
+                    select(models.Task)
+                    .where(
+                        models.Task.project_id == project.id,
+                        models.Task.deleted_at.is_(None),
+                        models.Task.status.in_([TaskStatus.draft.value, TaskStatus.queued.value]),
+                    )
+                    .order_by(models.Task.created_at)
+                ).all()
+            )
+
+            # Get sibling tasks if this is a subtask
+            sibling_tasks = []
+            if task.parent_id:
+                sibling_tasks = list(
+                    s.exec(
+                        select(models.Task)
+                        .where(
+                            models.Task.parent_id == task.parent_id,
+                            models.Task.id != task_id,
+                            models.Task.deleted_at.is_(None),
+                            models.Task.status.in_([TaskStatus.draft.value, TaskStatus.queued.value]),
+                        )
+                        .order_by(models.Task.created_at)
+                    ).all()
+                )
+
+            # Get parent task info if exists
+            parent = None
+            if task.parent_id:
+                parent = s.get(models.Task, task.parent_id)
+
+            return {
+                "task": task,
+                "parent": parent,
+                "pending_tasks": pending_tasks,
+                "sibling_tasks": sibling_tasks,
+            }
+
+    def save_next_steps_choice(
+        self, task_id: int, suggested_task_ids: list[int], selected_task_ids: list[int], action: str
+    ) -> models.TaskSuggestion:
+        """Save user's choice for next steps."""
+        with Session(self.engine) as s:
+            suggestion = models.TaskSuggestion(
+                task_id=task_id,
+                suggested_task_ids=json.dumps(suggested_task_ids),
+                selected_task_ids=json.dumps(selected_task_ids),
+                action_taken=action,
+            )
+            s.add(suggestion)
+            s.commit()
+            s.refresh(suggestion)
+            return suggestion

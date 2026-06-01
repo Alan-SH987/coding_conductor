@@ -9,6 +9,7 @@ import {
   type Task,
 } from "@/lib/api";
 import { Badge, Button, Card } from "@/components/ui";
+import { NextStepsModal } from "@/components/NextStepsModal";
 
 interface RunWithEvents extends Run {
   events: ApiEvent[];
@@ -59,6 +60,7 @@ export default function TaskPage({ params }: { params: { id: string } }) {
   const [planning, setPlanning] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [acting, setActing] = useState(false);
+  const [showNextStepsModal, setShowNextStepsModal] = useState(false);
   const esRef = useRef<EventSource | null>(null);
 
   async function load(): Promise<Task | null> {
@@ -121,9 +123,13 @@ export default function TaskPage({ params }: { params: { id: string } }) {
       finished = true;
       es.close();
       if (esRef.current === es) esRef.current = null;
-      await load();
+      const updatedTask = await load();
       setLiveEvents([]);
       setRunning(false);
+      // Show next steps modal if task is now awaiting approval
+      if (updatedTask?.status === "awaiting_approval") {
+        setShowNextStepsModal(true);
+      }
     });
 
     es.onerror = async () => {
@@ -233,6 +239,10 @@ export default function TaskPage({ params }: { params: { id: string } }) {
         setError(`merge conflict: ${res.conflicted_files.join(", ")}`);
       }
       await load();
+      // Show next steps modal after successful approval
+      if (res.ok) {
+        setShowNextStepsModal(true);
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -246,10 +256,27 @@ export default function TaskPage({ params }: { params: { id: string } }) {
     try {
       await api.reject(taskId);
       await load();
+      // Show next steps modal after rejection
+      setShowNextStepsModal(true);
     } catch (e) {
       setError(String(e));
     } finally {
       setActing(false);
+    }
+  }
+
+  async function handleTasksSelected(taskIds: number[]) {
+    // Start the selected tasks
+    try {
+      for (const tid of taskIds) {
+        await api.runTask(tid);
+      }
+      // Navigate to the first task if only one selected
+      if (taskIds.length === 1) {
+        window.location.href = `/tasks/${taskIds[0]}`;
+      }
+    } catch (e) {
+      setError(String(e));
     }
   }
 
@@ -449,6 +476,14 @@ export default function TaskPage({ params }: { params: { id: string } }) {
       )}
 
       {error && <p className="text-sm text-red-400">{error}</p>}
+
+      {showNextStepsModal && (
+        <NextStepsModal
+          taskId={taskId}
+          onClose={() => setShowNextStepsModal(false)}
+          onTasksSelected={handleTasksSelected}
+        />
+      )}
     </div>
   );
 }

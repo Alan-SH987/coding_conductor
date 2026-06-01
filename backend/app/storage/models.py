@@ -88,3 +88,13 @@ class Review(SQLModel, table=True):
     summary: str = ""
     findings_json: str = "[]"
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class TaskSuggestion(SQLModel, table=True):
+    """Records next-step suggestions presented to user after task completion."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    task_id: int = Field(foreign_key="task.id")
+    suggested_task_ids: str = "[]"  # JSON array of task IDs suggested
+    selected_task_ids: str = "[]"  # JSON array of task IDs user selected
+    action_taken: Optional[str] = None  # 'selected' | 'skipped' | 'created_new'
+    created_at: datetime = Field(default_factory=utcnow)
