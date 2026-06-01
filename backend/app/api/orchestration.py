@@ -38,9 +38,11 @@ from app.orchestrator import (
     NotRunnable,
     Orchestrator,
     PlanError,
+    QuotaExceeded,
     ReviewError,
     ReviseError,
 )
+from app.orchestrator.model_router import ModelRouter
 from app.storage import models
 
 router = APIRouter()
@@ -67,10 +69,40 @@ class TaskCreate(BaseModel):
 # ---------- agents ----------
 @router.get("/agents")
 def list_agents(orch: Orchestrator = Depends(get_orchestrator)):
-    return [
+    agents = [
         {"name": name, "capabilities": sorted(adapter.capabilities)}
         for name, adapter in orch.adapters.items()
     ]
+    # Add "auto" as a special option for intelligent routing
+    agents.insert(0, {
+        "name": "auto",
+        "capabilities": ["intelligent_routing"],
+        "description": "Automatically select the best model based on task complexity"
+    })
+    return agents
+
+
+class ModelRecommendationRequest(BaseModel):
+    title: str
+    description: str = ""
+
+
+@router.post("/agents/recommend")
+def recommend_model(
+    body: ModelRecommendationRequest,
+    orch: Orchestrator = Depends(get_orchestrator)
+):
+    """Get a model recommendation based on task complexity."""
+    available_models = list(orch.adapters.keys())
+    router = ModelRouter(available_models=available_models)
+    model = router.select_model(body.title, body.description)
+    explanation = router.explain_choice(model, body.title, body.description)
+
+    return {
+        "recommended_model": model,
+        "explanation": explanation,
+        "available_models": available_models
+    }
 
 
 # ---------- projects ----------
@@ -109,6 +141,55 @@ def unpin_project(project_id: int, orch: Orchestrator = Depends(get_orchestrator
     if proj is None:
         raise HTTPException(404, f"project {project_id} not found")
     return proj
+
+
+class QuotaUpdate(BaseModel):
+    quota_tokens: Optional[int] = None
+    quota_cost_usd: Optional[float] = None
+
+
+@router.patch("/projects/{project_id}/quotas", response_model=models.Project)
+def update_project_quotas(
+    project_id: int,
+    body: QuotaUpdate,
+    orch: Orchestrator = Depends(get_orchestrator)
+):
+    """Update quota settings for a project."""
+    proj = orch.update_project_quotas(project_id, body.quota_tokens, body.quota_cost_usd)
+    if proj is None:
+        raise HTTPException(404, f"project {project_id} not found")
+    return proj
+
+
+@router.get("/projects/{project_id}/usage")
+def get_project_usage(project_id: int, orch: Orchestrator = Depends(get_orchestrator)):
+    """Get current usage statistics for a project."""
+    proj = orch.get_project(project_id)
+    if proj is None:
+        raise HTTPException(404, f"project {project_id} not found")
+
+    usage = orch.get_project_usage(project_id)
+
+    return {
+        "project_id": project_id,
+        "usage": usage,
+        "quotas": {
+            "quota_tokens": proj.quota_tokens,
+            "quota_cost_usd": proj.quota_cost_usd,
+        },
+        "usage_percentage": {
+            "tokens": (
+                (usage["total_tokens"] / proj.quota_tokens * 100)
+                if proj.quota_tokens
+                else None
+            ),
+            "cost": (
+                (usage["total_cost_usd"] / proj.quota_cost_usd * 100)
+                if proj.quota_cost_usd
+                else None
+            ),
+        },
+    }
 
 
 @router.post("/projects/{project_id}/archive", response_model=models.Project)
@@ -182,6 +263,8 @@ async def run_task(task_id: int, orch: Orchestrator = Depends(get_orchestrator))
         raise HTTPException(
             409, f"task {task_id} is a planned container; run its subtasks instead"
         )
+    except QuotaExceeded as e:
+        raise HTTPException(429, str(e))
 
 
 @router.post("/tasks/{task_id}/plan", response_model=list[models.Task], status_code=201)

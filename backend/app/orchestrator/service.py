@@ -27,6 +27,7 @@ from app import memory
 from app.adapters.base import AgentAdapter, EventType, RunContext, TaskSpec
 from app.gitops import GitOpsEngine
 from app.gitops.models import WorktreeHandle
+from app.orchestrator.model_router import ModelRouter
 from app.orchestrator.routing import select_agent
 from app.storage import models
 from app.storage.db import engine as default_engine
@@ -55,6 +56,10 @@ class NotRunnable(Exception):
 
 class ReviewError(Exception):
     """Raised when a review cannot be produced (no diff / no review agent)."""
+
+
+class QuotaExceeded(Exception):
+    """Raised when a project has exceeded its usage quota."""
 
 
 class ReviseError(Exception):
@@ -87,6 +92,13 @@ class Orchestrator:
     def create_task(self, project_id: int, title: str, description: str = "",
                     agent: str = "claude",
                     parent_id: Optional[int] = None) -> models.Task:
+        # Use intelligent routing if "auto" is specified
+        if agent == "auto":
+            available_models = list(self.adapters.keys())
+            router = ModelRouter(available_models=available_models)
+            agent = router.select_model(title, description)
+            logger.info(f"Auto-selected model {agent} for task: {title}")
+
         with Session(self.engine) as s:
             task = models.Task(
                 project_id=project_id, title=title, description=description,
@@ -236,6 +248,14 @@ class Orchestrator:
             agent_name = task.assigned_agent
             spec_goal = task.description or task.title
             project_path = project.path
+            project_id = task.project_id
+
+        # Check quota before starting the run
+        try:
+            self.check_quota(project_id)
+        except QuotaExceeded:
+            self._set_status(task_id, TaskStatus.failed)
+            raise
 
         if agent_name not in self.adapters:
             self._set_status(task_id, TaskStatus.failed)
@@ -526,6 +546,68 @@ class Orchestrator:
             if proj is None or proj.deleted_at is not None:
                 return None
             return proj
+
+    def update_project_quotas(
+        self, project_id: int, quota_tokens: Optional[int], quota_cost_usd: Optional[float]
+    ) -> Optional[models.Project]:
+        """Update quota settings for a project."""
+        with Session(self.engine) as s:
+            proj = s.get(models.Project, project_id)
+            if proj is None or proj.deleted_at is not None:
+                return None
+            proj.quota_tokens = quota_tokens
+            proj.quota_cost_usd = quota_cost_usd
+            s.add(proj)
+            s.commit()
+            s.refresh(proj)
+            return proj
+
+    def get_project_usage(self, project_id: int) -> dict:
+        """Calculate total usage (tokens and cost) for a project."""
+        with Session(self.engine) as s:
+            # Get all runs for tasks in this project
+            result = s.exec(
+                select(models.Run)
+                .join(models.Task)
+                .where(models.Task.project_id == project_id)
+            ).all()
+
+            total_tokens = sum(run.tokens_in + run.tokens_out for run in result)
+            total_cost = sum(run.cost for run in result)
+
+            return {
+                "total_tokens": total_tokens,
+                "total_cost_usd": total_cost,
+                "run_count": len(list(result)),
+            }
+
+    def check_quota(self, project_id: int) -> None:
+        """Check if project has exceeded quota limits.
+
+        Raises QuotaExceeded if any quota is exceeded.
+        """
+        with Session(self.engine) as s:
+            proj = s.get(models.Project, project_id)
+            if proj is None:
+                raise ValueError(f"project {project_id} not found")
+
+            # If no quotas are set, allow unlimited usage
+            if proj.quota_tokens is None and proj.quota_cost_usd is None:
+                return
+
+            usage = self.get_project_usage(project_id)
+
+            # Check token quota
+            if proj.quota_tokens is not None and usage["total_tokens"] >= proj.quota_tokens:
+                raise QuotaExceeded(
+                    f"Token quota exceeded: {usage['total_tokens']}/{proj.quota_tokens} tokens used"
+                )
+
+            # Check cost quota
+            if proj.quota_cost_usd is not None and usage["total_cost_usd"] >= proj.quota_cost_usd:
+                raise QuotaExceeded(
+                    f"Cost quota exceeded: ${usage['total_cost_usd']:.2f}/${proj.quota_cost_usd:.2f} used"
+                )
 
     def list_tasks(self, project_id: int) -> list[models.Task]:
         with Session(self.engine) as s:

@@ -15,5 +15,15 @@ from app.orchestrator import Orchestrator
 
 @lru_cache
 def get_orchestrator() -> Orchestrator:
-    adapters = {"claude": ClaudeAdapter(), "codex": CodexAdapter()}
+    adapters = {
+        # Claude adapters (default, single tier for now)
+        "claude": ClaudeAdapter(),
+
+        # Codex adapters with different model tiers
+        "codex": CodexAdapter(),  # Default model
+        "haiku": CodexAdapter(model="haiku"),
+        "sonnet-3-5": CodexAdapter(model="sonnet-3-5"),
+        "sonnet-4-5": CodexAdapter(model="sonnet-4-5"),
+        "opus": CodexAdapter(model="opus"),
+    }
     return Orchestrator(adapters)

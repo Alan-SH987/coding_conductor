@@ -4,6 +4,7 @@ from .service import (
     NotRunnable,
     Orchestrator,
     PlanError,
+    QuotaExceeded,
     ReviewError,
     ReviseError,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "NotRunnable",
     "Orchestrator",
     "PlanError",
+    "QuotaExceeded",
     "ReviewError",
     "ReviseError",
 ]

@@ -59,6 +59,9 @@ class CodexAdapter(AgentAdapter):
         self.bin = bin_path
         self.sandbox = sandbox
         self.model = model
+        # Use model name as adapter name if specified for better identification
+        if model:
+            self.name = model
         self._last_session_id: Optional[str] = None
         self._last_message: str = ""
 
