@@ -359,8 +359,13 @@ def test_bad_agent_400(client, repo):
 
 def test_list_agents(client):
     agents = client.get("/agents").json()
-    assert {a["name"] for a in agents} == {"claude"}
-    assert agents[0]["capabilities"] == ["code", "plan", "review"]
+    names = {a["name"] for a in agents}
+    # Should include "auto" (intelligent routing) and "claude"
+    assert "auto" in names
+    assert "claude" in names
+    # Find the claude agent and check its capabilities
+    claude = next(a for a in agents if a["name"] == "claude")
+    assert claude["capabilities"] == ["code", "plan", "review"]
 
 
 def test_non_git_path_400(client, tmp_path):

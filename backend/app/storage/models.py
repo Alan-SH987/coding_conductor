@@ -37,6 +37,9 @@ class Project(SQLModel, table=True):
     is_archived: bool = False
     deleted_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utcnow)
+    # Quota management (single-user, project-level)
+    quota_tokens: Optional[int] = None  # Max tokens allowed (None = unlimited)
+    quota_cost_usd: Optional[float] = None  # Max cost in USD (None = unlimited)
 
 
 class Task(SQLModel, table=True):
