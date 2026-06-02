@@ -192,10 +192,18 @@ def test_build_cmd_resume_omits_cwd_and_sandbox():
     cmd = a._build_cmd("more work", ctx)
     assert cmd[:4] == ["codex", "exec", "resume", "sess-9"]
     assert "--json" in cmd
-    # resume restores the session's own cwd/sandbox; we must not pass these.
+    # resume restores the session's own cwd/sandbox/model; we must not pass these.
     assert "-C" not in cmd
     assert "-s" not in cmd
+    assert "-m" not in cmd
     assert cmd[-1] == "more work"
+
+
+def test_build_cmd_defaults_to_supported_model():
+    # No explicit model -> pin a base model the ChatGPT login accepts (not the
+    # CLI's own gpt-5.3-codex default, which it rejects).
+    cmd = CodexAdapter()._build_cmd("do it", RunContext(worktree_path="/wt"))
+    assert "-m" in cmd and cmd[cmd.index("-m") + 1] == "gpt-5.5"
 
 
 def test_system_prompt_is_prepended_to_prompt():

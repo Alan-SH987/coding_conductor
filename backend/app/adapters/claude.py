@@ -307,6 +307,9 @@ class ClaudeAdapter(AgentAdapter):
             cwd=ctx.worktree_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # stream-json lines (big tool outputs) can exceed asyncio's default
+            # 64KB line buffer; raise it so reading a line doesn't blow up.
+            limit=8 * 1024 * 1024,
         )
         try:
             assert proc.stdout is not None

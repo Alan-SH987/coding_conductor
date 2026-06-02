@@ -53,6 +53,10 @@ CODEX_BIN = "codex"
 class CodexAdapter(AgentAdapter):
     name = "codex"
     capabilities = {"code", "review", "test", "explain"}
+    # The codex CLI's own default is a "-codex" model (e.g. gpt-5.3-codex), which
+    # a ChatGPT-account login rejects ("not supported"). Pin a base model that
+    # works on that login instead, so the default adapter just runs.
+    DEFAULT_MODEL = "gpt-5.5"
 
     def __init__(self, bin_path: str = CODEX_BIN, sandbox: str = "workspace-write",
                  model: Optional[str] = None):
@@ -91,11 +95,12 @@ class CodexAdapter(AgentAdapter):
         cmd += ["--json", "--skip-git-repo-check"]
         if not resume:
             cmd += ["-C", ctx.worktree_path, "-s", self.sandbox]
+            # A resume keeps the session's existing model; only set -m on a fresh
+            # run. Default to a base model the ChatGPT login accepts.
+            cmd += ["-m", self.model or self.DEFAULT_MODEL]
         # Fully autonomous within the sandbox: never block on an approval prompt
         # we can't answer in headless mode.
         cmd += ["-c", 'approval_policy="never"']
-        if self.model:
-            cmd += ["-m", self.model]
         cmd += [prompt]
         return cmd
 
@@ -110,6 +115,9 @@ class CodexAdapter(AgentAdapter):
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # stream-json lines (big tool outputs) can exceed asyncio's default
+            # 64KB line buffer; raise it so reading a line doesn't blow up.
+            limit=8 * 1024 * 1024,
         )
         saw_error = False
         try:
