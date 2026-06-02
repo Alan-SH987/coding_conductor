@@ -206,7 +206,14 @@ export default function ProjectPage({
     try {
       const res = await api.approve(id);
       if (!res.ok) {
-        if (res.conflict) {
+        if (res.dirty) {
+          const files = res.dirty_files.length
+            ? ` (${res.dirty_files.join(", ")})`
+            : "";
+          setError(
+            `main has uncommitted changes — commit or stash them, then approve again${files}`,
+          );
+        } else if (res.conflict) {
           setError(`merge conflict: ${res.conflicted_files.join(", ")}`);
         } else if (res.verify_failed) {
           // Gate blocked it: the merge was aborted, main is untouched, and the

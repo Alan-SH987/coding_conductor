@@ -45,3 +45,6 @@ class MergeResult:
     # Pre-merge verify gate outcome (only meaningful when ok is False).
     verify_failed: bool = False
     verify_output: str = ""
+    # Main had uncommitted changes — the merge was refused (commit/stash first).
+    dirty: bool = False
+    dirty_files: list[str] = field(default_factory=list)

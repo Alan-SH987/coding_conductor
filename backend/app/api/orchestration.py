@@ -470,6 +470,8 @@ def approve_task(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
         "conflicted_files": res.conflicted_files,
         "verify_failed": res.verify_failed,
         "verify_output": res.verify_output,
+        "dirty": res.dirty,
+        "dirty_files": res.dirty_files,
         "task": orch.get_task(task_id),
     }
 

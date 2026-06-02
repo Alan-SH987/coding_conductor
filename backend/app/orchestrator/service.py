@@ -683,10 +683,11 @@ class Orchestrator:
         if res.ok:
             git.remove_worktree(self._handle_from_task(task))
             self._update_task(task_id, status=TaskStatus.merged.value)
-        elif res.verify_failed:
-            # Build/test gate failed — the merge was aborted, nothing landed on
-            # main. Leave the task at awaiting_approval (worktree intact) so the
-            # human can revise and retry rather than losing the gate state.
+        elif res.dirty or res.verify_failed:
+            # Blocked, not failed: main has uncommitted changes, or the verify
+            # gate rejected the build. Nothing landed on main; leave the task at
+            # awaiting_approval (worktree intact) so it can be retried after the
+            # human cleans up / fixes, rather than losing the gate state.
             pass
         else:
             self._update_task(task_id, status=TaskStatus.failed.value)

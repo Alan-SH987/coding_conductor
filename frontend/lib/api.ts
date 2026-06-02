@@ -95,6 +95,8 @@ export interface ApproveResult {
   conflicted_files: string[];
   verify_failed: boolean;
   verify_output: string;
+  dirty: boolean;
+  dirty_files: string[];
   task: Task;
 }
 

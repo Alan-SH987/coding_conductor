@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from app import memory
-from app.gitops import DirtyRepoError, GitOpsEngine, NotAGitRepo
+from app.gitops import GitOpsEngine, NotAGitRepo
 
 
 def _run(args, cwd):
@@ -53,10 +53,25 @@ def test_create_and_remove_worktree(repo):
     assert branches == ""  # branch cleaned up
 
 
-def test_dirty_repo_rejected(repo):
+def test_dirty_main_allows_worktree_but_blocks_merge(repo):
+    """Moved guard: a dirty main no longer blocks worktree creation (the worktree
+    is isolated); the clean-main requirement now lives at merge_to (approve)."""
+    e = GitOpsEngine(repo)
+    h = e.create_worktree("1")  # clean main: fine
+
+    # dirty the main work tree with an uncommitted tracked change
     (repo / "README.md").write_text("uncommitted change\n")
-    with pytest.raises(DirtyRepoError):
-        GitOpsEngine(repo).create_worktree("1")
+    assert e.inspect_repo().is_dirty is True
+
+    # create_worktree still succeeds on a dirty main (isolated from the work tree)
+    h2 = e.create_worktree("2")
+    assert Path(h2.path).exists()
+    e.remove_worktree(h2)
+
+    # but merge_to refuses and surfaces the offending files
+    res = e.merge_to(h)
+    assert res.ok is False and res.dirty is True
+    assert "README.md" in res.dirty_files
 
 
 def test_first_run_scaffold_stays_clean(repo):

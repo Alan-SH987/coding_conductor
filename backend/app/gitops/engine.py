@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Optional
 
 from .errors import (
-    DirtyRepoError,
     GitCommandError,
     NotAGitRepo,
     WorktreeExistsError,
@@ -88,11 +87,11 @@ class GitOpsEngine:
         return self.worktrees_root / f"task-{task_id}"
 
     def create_worktree(self, task_id: str | int, base: Optional[str] = None) -> WorktreeHandle:
+        # A worktree is checked out from a COMMIT (base_sha) into an isolated
+        # directory, so a dirty main is harmless here — the human's uncommitted
+        # changes are never touched. The clean-main requirement lives at merge_to
+        # (approve), where git would actually clobber/conflict with them.
         info = self.inspect_repo()
-        if info.is_dirty:
-            raise DirtyRepoError(
-                "refuse to create worktree: main repo has uncommitted changes"
-            )
         base = base or info.default_branch
         base_sha = self._git(["rev-parse", base]).stdout.strip()
         wt_path = self._path_for(task_id)
@@ -175,9 +174,27 @@ class GitOpsEngine:
             )
         return files
 
+    def _dirty_files(self) -> list[str]:
+        """Tracked files with uncommitted changes (porcelain paths).
+
+        Don't strip the whole output first — a modified-unstaged line starts with
+        a space (" M README.md"), and a global strip would shift every path by a
+        char. Split first, then slice off the 2-char status + space.
+        """
+        out = self._git(["status", "--porcelain", "--untracked-files=no"]).stdout
+        return [line[3:] for line in out.splitlines() if line]
+
     def merge_to(self, handle: WorktreeHandle, target: Optional[str] = None,
                  strategy: str = "no-ff", verify_cmd: Optional[str] = None) -> MergeResult:
         info = self.inspect_repo()
+        # Clean-main guard (moved here from create_worktree): a worktree is
+        # isolated, but merging into main would clobber/conflict with uncommitted
+        # changes. Block with a clear signal instead of attempting the merge.
+        if info.is_dirty:
+            return MergeResult(
+                ok=False, merged_sha=None, conflict=False,
+                dirty=True, dirty_files=self._dirty_files(),
+            )
         target = target or info.default_branch
         if info.default_branch != target:
             self._git(["checkout", target])
