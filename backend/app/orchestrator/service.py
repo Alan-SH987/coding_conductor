@@ -29,7 +29,7 @@ from sqlmodel import Session, select
 from app import memory, skills
 from app.adapters.base import AgentAdapter, EventType, RunContext, TaskSpec
 from app.gitops import GitOpsEngine, NotAGitRepo
-from app.gitops.models import WorktreeHandle
+from app.gitops.models import MergeResult, WorktreeHandle
 from app.orchestrator.concurrency_limiter import ConcurrencyLimiter, ConcurrencyLimitReached
 from app.orchestrator.error_classifier import classify_error
 from app.orchestrator.model_router import ModelRouter
@@ -1194,6 +1194,9 @@ class Orchestrator:
     # ---------- approval gate ----------
     def approve_task(self, task_id: int):
         task, project = self._task_and_project(task_id)
+        # Idempotent: if already merged, return success immediately
+        if task.status == TaskStatus.merged.value:
+            return MergeResult(ok=True, merged_sha=None, conflict=False, push_ok=True)
         git = GitOpsEngine(project.path)
         res = git.merge_to(self._handle_from_task(task), verify_cmd=project.verify_cmd)
         if res.ok:
