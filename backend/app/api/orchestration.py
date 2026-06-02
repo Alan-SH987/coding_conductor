@@ -526,6 +526,23 @@ def reject_task(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
     return orch.reject_task(task_id)
 
 
+@router.post("/tasks/{task_id}/stop", response_model=models.Task)
+async def stop_task(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
+    """Stop a running task.
+
+    Cancels the in-flight asyncio task and marks the task as failed.
+    """
+    task = orch.get_task(task_id)
+    if task is None:
+        raise HTTPException(404, f"task {task_id} not found")
+    if not orch.is_running(task_id):
+        raise HTTPException(409, f"task {task_id} is not running")
+    try:
+        return orch.stop_task(task_id)
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 # ---------- runs / events (inspection; SSE streaming comes later) ----------
 @router.get("/tasks/{task_id}/runs", response_model=list[models.Run])
 def list_runs(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
