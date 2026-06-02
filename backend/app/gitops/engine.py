@@ -233,7 +233,28 @@ class GitOpsEngine:
                 check=False,
             )
         merged_sha = self._git(["rev-parse", "HEAD"]).stdout.strip()
-        return MergeResult(ok=True, merged_sha=merged_sha, conflict=False)
+        # Push to remote after successful merge
+        push_ok, push_output = self._push_to_remote(target)
+        return MergeResult(ok=True, merged_sha=merged_sha, conflict=False,
+                          push_ok=push_ok, push_output=push_output)
+
+    def _push_to_remote(self, branch: str, remote: str = "origin") -> tuple[bool, str]:
+        """Push the merged branch to remote (best-effort, non-blocking).
+
+        Returns (ok, output) where ok is True if push succeeded or no remote
+        exists. A missing remote is not an error — local-only repos are valid.
+        """
+        # Check if remote exists
+        probe = self._git(["remote", "get-url", remote], check=False)
+        if probe.returncode != 0:
+            # No remote configured, that's fine
+            return True, "no remote configured"
+        # Push to remote
+        proc = self._git(["push", remote, branch], check=False)
+        out = (proc.stdout or "") + (proc.stderr or "")
+        if len(out) > 4000:
+            out = out[:4000] + "…(truncated)"
+        return proc.returncode == 0, out.strip()
 
     def _run_verify(self, cmd: str, timeout: int = 600) -> tuple[bool, str]:
         """Run an operator-configured verify command in the main repo working dir.

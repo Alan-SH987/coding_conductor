@@ -48,3 +48,6 @@ class MergeResult:
     # Main had uncommitted changes — the merge was refused (commit/stash first).
     dirty: bool = False
     dirty_files: list[str] = field(default_factory=list)
+    # Post-merge push outcome (only meaningful when ok is True).
+    push_ok: bool = False
+    push_output: str = ""
