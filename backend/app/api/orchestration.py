@@ -546,6 +546,8 @@ def approve_task(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
             "verify_output": "",
             "dirty": False,
             "dirty_files": [],
+            "push_ok": True,
+            "push_output": "",
             "task": task,
         }
     res = orch.approve_task(task_id)
@@ -558,6 +560,8 @@ def approve_task(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
         "verify_output": res.verify_output,
         "dirty": res.dirty,
         "dirty_files": res.dirty_files,
+        "push_ok": res.push_ok,
+        "push_output": res.push_output,
         "task": orch.get_task(task_id),
     }
 
