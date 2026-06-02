@@ -25,6 +25,7 @@ from app.adapters.base import (
     TaskSpec,
 )
 from app.orchestrator import Orchestrator
+from app.orchestrator.retry_policy import RetryPolicy
 from app.storage import models
 
 
@@ -148,6 +149,38 @@ class FailThenSucceedAdapter(AgentAdapter):
         return HealthStatus(ok=True, auth_ok=True)
 
 
+class TransientThenSucceedAdapter(AgentAdapter):
+    """A transient transport failure is retried in the same worktree/session."""
+    name = "fake"
+    capabilities = {"code"}
+
+    def __init__(self):
+        self.calls = 0
+        self.resume_session_ids: list[str | None] = []
+
+    def supports_resume(self) -> bool:
+        return True
+
+    async def run(self, spec: TaskSpec, ctx: RunContext) -> AsyncIterator[AgentEvent]:
+        self.calls += 1
+        self.resume_session_ids.append(ctx.resume_session_id)
+        if self.calls == 1:
+            (Path(ctx.worktree_path) / "partial.txt").write_text("kept progress\n")
+            yield AgentEvent(EventType.meta, data={"session_id": "transient-sess"})
+            yield AgentEvent(
+                EventType.error,
+                text="network timeout while streaming",
+                data={"kind": "network"},
+            )
+            return
+        (Path(ctx.worktree_path) / "recovered.txt").write_text("finished after retry\n")
+        yield AgentEvent(EventType.meta, data={"session_id": "transient-sess"})
+        yield AgentEvent(EventType.final, text="done", data={"session_id": "transient-sess"})
+
+    async def healthcheck(self) -> HealthStatus:
+        return HealthStatus(ok=True, auth_ok=True)
+
+
 # --------------------------------------------------------------------------
 # tests
 # --------------------------------------------------------------------------
@@ -256,6 +289,29 @@ def test_failed_task_can_be_rerun(engine, repo):
     assert "hello from retry" in diff
     # the failed attempt's partial work must not leak into the retry's diff
     assert "half-done" not in diff
+
+
+def test_transient_error_auto_retries_with_resume(engine, repo):
+    adapter = TransientThenSucceedAdapter()
+    orch = Orchestrator(
+        {"fake": adapter},
+        engine=engine,
+        retry_policy=RetryPolicy(max_attempts=3, initial_delay_seconds=0),
+    )
+    proj = orch.create_project("p", str(repo))
+    task = orch.create_task(proj.id, "do thing", agent="fake")
+
+    result = asyncio.run(orch.run_task(task.id))
+
+    assert result.status == "awaiting_approval"
+    assert adapter.calls == 2
+    assert adapter.resume_session_ids == [None, "transient-sess"]
+    runs = orch.list_runs(task.id)
+    assert [r.status for r in runs] == ["failed", "succeeded"]
+    assert [r.session_id for r in runs] == ["transient-sess", "transient-sess"]
+    diff = orch.get_diff(task.id)
+    assert "kept progress" in diff
+    assert "finished after retry" in diff
 
 
 def test_adapter_crash_marks_failed_and_raises(engine, repo):

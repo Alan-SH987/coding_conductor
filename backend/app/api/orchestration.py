@@ -402,6 +402,7 @@ async def stream_task(
 
     async def gen():
         last_seq = -1
+        last_run_id = None
         while True:
             if await request.is_disconnected():
                 return
@@ -409,6 +410,9 @@ async def stream_task(
             task = orch.get_task(task_id)
             if runs:
                 run = runs[-1]
+                if run.id != last_run_id:
+                    last_run_id = run.id
+                    last_seq = -1
                 for ev in orch.list_events(run.id):
                     if ev.seq > last_seq:
                         last_seq = ev.seq
