@@ -196,6 +196,14 @@ class GitOpsEngine:
                 dirty=True, dirty_files=self._dirty_files(),
             )
         target = target or info.default_branch
+        # Check if the branch to merge actually exists. If not, the task was
+        # likely already merged (branch deleted) — return success for idempotency.
+        # This handles race conditions where two merge requests arrive nearly
+        # simultaneously, or the user clicks "merge" again before the page refreshes.
+        branch_check = self._git(["rev-parse", "--verify", handle.branch], check=False)
+        if branch_check.returncode != 0:
+            # Branch doesn't exist — treat as already merged (idempotent success)
+            return MergeResult(ok=True, merged_sha=None, conflict=False, push_ok=True)
         if info.default_branch != target:
             self._git(["checkout", target])
         flag = "--no-ff" if strategy == "no-ff" else "--ff"
