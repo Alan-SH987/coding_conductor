@@ -92,13 +92,15 @@ export default function ProjectPage({
         toolCalls++;
         try {
           const p = JSON.parse(ev.payload_json);
-          lastTool = p.tool || p.name || null;
+          // payload_json is {"text": ..., "data": {...}}, tool name is in data.name or data.tool
+          lastTool = p.data?.name || p.data?.tool || p.tool || p.name || null;
         } catch {
           // ignore
         }
       } else if (ev.type === "final") {
         try {
           const p = JSON.parse(ev.payload_json);
+          // payload_json is {"text": ..., "data": {...}}, summary is in text field
           if (p.text) {
             summary = p.text;
           }
@@ -154,7 +156,8 @@ export default function ProjectPage({
       const results = await Promise.all(progressPromises);
       const newProgress: Record<number, { toolCalls: number; lastTool: string | null; summary: string | null }> = {};
       for (const result of results) {
-        if (result && result.progress.toolCalls > 0) {
+        // Include tasks that have tool calls OR a summary
+        if (result && (result.progress.toolCalls > 0 || result.progress.summary)) {
           newProgress[result.taskId] = result.progress;
         }
       }
@@ -201,7 +204,8 @@ export default function ProjectPage({
       if (ev.type === "tool_use") {
         try {
           const p = JSON.parse(ev.payload_json);
-          const tool = p.tool || p.name || null;
+          // payload_json is {"text": ..., "data": {...}}, tool name is in data.name or data.tool
+          const tool = p.data?.name || p.data?.tool || p.tool || p.name || null;
           setTaskProgress((prev) => ({
             ...prev,
             [taskId]: {
