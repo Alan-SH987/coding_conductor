@@ -64,6 +64,22 @@ class GitOpsEngine:
         head_sha = self._git(["rev-parse", "HEAD"]).stdout.strip()
         return RepoInfo(is_git=True, default_branch=branch, is_dirty=is_dirty, head_sha=head_sha)
 
+    def init_repo(self, default_branch: str = "main") -> RepoInfo:
+        """Initialize a brand-new repo at repo_path (for adding an empty project).
+
+        Creates the directory if needed, runs ``git init``, and makes an initial
+        commit (empty if the dir has no files) so HEAD exists — create_worktree
+        needs a base commit to branch from. Only call on a path that is not
+        already a git work tree.
+        """
+        self.repo_path.mkdir(parents=True, exist_ok=True)
+        self._git(["init", "-b", default_branch])
+        self._git(["add", "-A"])
+        self._git(self._as_conductor(
+            ["commit", "--allow-empty", "-m", "initial commit (conductor)"]
+        ))
+        return self.inspect_repo()
+
     # ----- worktree lifecycle -------------------------------------------
     def _branch_for(self, task_id: str | int) -> str:
         return f"{BRANCH_PREFIX}{task_id}"

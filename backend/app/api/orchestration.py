@@ -59,6 +59,7 @@ def _sse(event: str, data) -> str:
 class ProjectCreate(BaseModel):
     name: str
     path: str
+    init: bool = True  # auto `git init` an empty/non-git path instead of rejecting
 
 
 class TaskCreate(BaseModel):
@@ -142,7 +143,7 @@ async def agents_health(orch: Orchestrator = Depends(get_orchestrator)):
 # ---------- projects ----------
 @router.post("/projects", response_model=models.Project, status_code=201)
 def create_project(body: ProjectCreate, orch: Orchestrator = Depends(get_orchestrator)):
-    return orch.create_project(body.name, body.path)
+    return orch.create_project(body.name, body.path, init=body.init)
 
 
 @router.get("/projects", response_model=list[models.Project])

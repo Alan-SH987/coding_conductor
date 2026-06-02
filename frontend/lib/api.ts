@@ -171,8 +171,8 @@ export const api = {
   listProjects: (includeArchived = false) =>
     http<Project[]>(`/projects?include_archived=${includeArchived}`),
   getProject: (id: number) => http<Project>(`/projects/${id}`),
-  createProject: (name: string, path: string) =>
-    post<Project>("/projects", { name, path }),
+  createProject: (name: string, path: string, init = true) =>
+    post<Project>("/projects", { name, path, init }),
   pinProject: (id: number) => post<Project>(`/projects/${id}/pin`),
   unpinProject: (id: number) => post<Project>(`/projects/${id}/unpin`),
   archiveProject: (id: number) => post<Project>(`/projects/${id}/archive`),

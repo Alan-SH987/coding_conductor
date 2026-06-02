@@ -25,7 +25,7 @@ from sqlmodel import Session, select
 
 from app import memory
 from app.adapters.base import AgentAdapter, EventType, RunContext, TaskSpec
-from app.gitops import GitOpsEngine
+from app.gitops import GitOpsEngine, NotAGitRepo
 from app.gitops.models import WorktreeHandle
 from app.orchestrator.model_router import ModelRouter
 from app.orchestrator.routing import select_agent
@@ -80,9 +80,16 @@ class Orchestrator:
         self._running: dict[int, asyncio.Task] = {}
 
     # ---------- projects ----------
-    def create_project(self, name: str, path: str) -> models.Project:
+    def create_project(self, name: str, path: str, init: bool = True) -> models.Project:
         git = GitOpsEngine(path)
-        info = git.inspect_repo()  # raises NotAGitRepo if invalid
+        try:
+            info = git.inspect_repo()  # raises NotAGitRepo if invalid
+        except (NotAGitRepo, FileNotFoundError):
+            # Empty / non-existent / non-git path: auto-create a git repo so the
+            # project is usable, instead of rejecting it.
+            if not init:
+                raise
+            info = git.init_repo()
         memory.ensure_conductor(git.repo_path)
         with Session(self.engine) as s:
             proj = models.Project(

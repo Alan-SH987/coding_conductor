@@ -277,7 +277,11 @@ export default function ProjectPage({
 
   return (
     <div className="flex h-[calc(100vh-9rem)] gap-4">
-      <ProjectSidebar projects={projects} currentId={projectId} />
+      <ProjectSidebar
+        projects={projects}
+        currentId={projectId}
+        onChanged={load}
+      />
 
       <div className="relative flex flex-1 overflow-hidden">
         <div className="flex flex-1 flex-col overflow-hidden">

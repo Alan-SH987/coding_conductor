@@ -368,10 +368,20 @@ def test_list_agents(client):
     assert claude["capabilities"] == ["code", "plan", "review"]
 
 
-def test_non_git_path_400(client, tmp_path):
+def test_non_git_path_auto_inits(client, tmp_path):
+    """By default an empty/non-git path is auto-initialized into a git project."""
     plain = tmp_path / "plain"
     plain.mkdir()
     r = client.post("/projects", json={"name": "p", "path": str(plain)})
+    assert r.status_code == 201
+    assert (plain / ".git").is_dir()  # auto `git init` happened
+
+
+def test_non_git_path_rejected_when_init_false(client, tmp_path):
+    """With init=false the old behavior holds: a non-git path is rejected."""
+    plain = tmp_path / "plain2"
+    plain.mkdir()
+    r = client.post("/projects", json={"name": "p", "path": str(plain), "init": False})
     assert r.status_code == 400
     assert r.json()["error"] == "not_a_git_repo"
 
