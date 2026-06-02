@@ -14,6 +14,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 CONDUCTOR_DIR = ".conductor"
 MEMORY_DIR = "memory"
@@ -128,6 +129,11 @@ _TAG_PATTERNS: dict[str, list[str]] = {
     "#ci": ["ci", "cd", "pipeline", "github actions", "workflow"],
 }
 
+_TAG_KEYWORD_MAP = {
+    kw.lower(): tag for tag, keywords in _TAG_PATTERNS.items() for kw in keywords
+}
+_ALL_TAG_KEYWORDS = tuple(sorted(_TAG_KEYWORD_MAP, key=len, reverse=True))
+
 
 def extract_tags(title: str, description: str = "", files: list[str] | None = None) -> list[str]:
     """Extract relevant tags from task title, description, and changed files.
@@ -152,14 +158,75 @@ def extract_tags(title: str, description: str = "", files: list[str] | None = No
             elif f_lower.endswith(".sql"):
                 text += " sql database"
 
-    found: list[str] = []
-    for tag, keywords in _TAG_PATTERNS.items():
-        for kw in keywords:
-            if kw in text:
-                found.append(tag)
-                break  # one match per tag is enough
+    found = {
+        _TAG_KEYWORD_MAP[kw]
+        for kw in _ALL_TAG_KEYWORDS
+        if kw in text
+    }
 
-    return sorted(set(found))
+    return sorted(found)
+
+
+class _HandoffEntry(NamedTuple):
+    text: str
+    terms: set[str]
+    tags: set[str]
+
+
+class _HandoffIndex(NamedTuple):
+    mtime_ns: int
+    size: int
+    entries: list[_HandoffEntry]
+
+
+_HANDOFF_INDEX_CACHE: dict[str, _HandoffIndex] = {}
+
+
+def _parse_handoff_entries(handoff_md: str) -> list[str]:
+    body = handoff_md.split("\n", 1)[-1] if handoff_md.startswith("# Handoff") else handoff_md
+    return [
+        e.strip()
+        for e in re.split(r"(?=^### )", body, flags=re.M)
+        if e.strip()
+    ]
+
+
+def _handoff_entry_tags(entry: str) -> set[str]:
+    tag_match = re.search(r"- tags:\s*(.+)", entry)
+    if not tag_match:
+        return set()
+    return set(re.findall(r"#\w+", tag_match.group(1)))
+
+
+def _build_handoff_entries(handoff_md: str) -> list[_HandoffEntry]:
+    return [
+        _HandoffEntry(text=entry, terms=_terms(entry), tags=_handoff_entry_tags(entry))
+        for entry in _parse_handoff_entries(handoff_md)
+    ]
+
+
+def _get_handoff_index(handoff_path: Path) -> _HandoffIndex:
+    stat = handoff_path.stat()
+    cache_key = str(handoff_path.resolve())
+    cached = _HANDOFF_INDEX_CACHE.get(cache_key)
+    if cached and cached.mtime_ns == stat.st_mtime_ns and cached.size == stat.st_size:
+        return cached
+
+    index = _HandoffIndex(
+        mtime_ns=stat.st_mtime_ns,
+        size=stat.st_size,
+        entries=_build_handoff_entries(handoff_path.read_text().strip()),
+    )
+    _HANDOFF_INDEX_CACHE[cache_key] = index
+    return index
+
+
+def _invalidate_handoff_index(handoff_path: Path) -> None:
+    try:
+        cache_key = str(handoff_path.resolve())
+    except OSError:
+        cache_key = str(handoff_path)
+    _HANDOFF_INDEX_CACHE.pop(cache_key, None)
 
 
 def _retrieve_handoffs(
@@ -171,8 +238,7 @@ def _retrieve_handoffs(
     If ``query_tags`` are provided, entries with matching tags get a bonus
     (tag matches are weighted 2x compared to keyword matches).
     """
-    body = handoff_md.split("\n", 1)[-1] if handoff_md.startswith("# Handoff") else handoff_md
-    entries = [e.strip() for e in re.split(r"(?=^### )", body, flags=re.M) if e.strip()]
+    entries = _build_handoff_entries(handoff_md)
     if not entries:
         return []
 
@@ -180,29 +246,44 @@ def _retrieve_handoffs(
     qtags = set(query_tags or [])
 
     if not qterms and not qtags:
-        return entries[-k:]
+        return [entry.text for entry in entries[-k:]]
 
-    def score_entry(entry: str) -> float:
+    def score_entry(entry: _HandoffEntry) -> float:
         """Score an entry: keyword overlap + tag bonus."""
-        entry_terms = _terms(entry)
-        keyword_score = len(qterms & entry_terms)
-
-        # Extract tags mentioned in the entry (e.g., from "- tags: #auth, #api")
-        tag_match = re.search(r"- tags:\s*(.+)", entry)
-        if tag_match and qtags:
-            entry_tags = set(re.findall(r"#\w+", tag_match.group(1)))
-            tag_score = len(qtags & entry_tags) * 2  # tags weighted 2x
-        else:
-            tag_score = 0
-
+        keyword_score = len(qterms & entry.terms)
+        tag_score = len(qtags & entry.tags) * 2
         return keyword_score + tag_score
 
     scored = [(score_entry(e), i, e) for i, e in enumerate(entries)]
     relevant = [
-        e for (s, i, e) in sorted(scored, key=lambda x: (x[0], x[1]), reverse=True)
+        e.text for (s, i, e) in sorted(scored, key=lambda x: (x[0], x[1]), reverse=True)
         if s > 0
     ][:k]
-    return relevant or entries[-k:]
+    return relevant or [entry.text for entry in entries[-k:]]
+
+
+def _retrieve_handoffs_from_file(
+    handoff_path: Path, query: str, k: int = 5, query_tags: list[str] | None = None
+) -> list[str]:
+    index = _get_handoff_index(handoff_path)
+    entries = index.entries
+    if not entries:
+        return []
+
+    qterms = _terms(query)
+    qtags = set(query_tags or [])
+    if not qterms and not qtags:
+        return [entry.text for entry in entries[-k:]]
+
+    def score_entry(entry: _HandoffEntry) -> float:
+        return len(qterms & entry.terms) + (len(qtags & entry.tags) * 2)
+
+    scored = [(score_entry(e), i, e) for i, e in enumerate(entries)]
+    relevant = [
+        e.text for (s, i, e) in sorted(scored, key=lambda x: (x[0], x[1]), reverse=True)
+        if s > 0
+    ][:k]
+    return relevant or [entry.text for entry in entries[-k:]]
 
 
 def build_context_bundle(
@@ -236,7 +317,7 @@ def build_context_bundle(
     if handoff.exists():
         h = handoff.read_text().strip()
         if h and "(none)" not in h:  # real entries exist (seed placeholder gone)
-            entries = _retrieve_handoffs(h, query, k=5, query_tags=query_tags)
+            entries = _retrieve_handoffs_from_file(handoff, query, k=5, query_tags=query_tags)
             if entries:
                 parts.append("## Relevant task handoffs\n\n" + "\n\n".join(entries)[-3000:])
 
@@ -285,6 +366,7 @@ def record_handoff(repo_path: str | Path, entry: str) -> None:
     if "(none)" in existing:
         existing = "# Handoff\n"
     f.write_text(existing.rstrip() + "\n\n" + entry.strip() + "\n")
+    _invalidate_handoff_index(f)
 
 
 def save_diff(repo_path: str | Path, task_id: int | str, unified_diff: str) -> str:
