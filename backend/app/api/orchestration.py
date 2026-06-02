@@ -526,6 +526,8 @@ async def revise_task(task_id: int, orch: Orchestrator = Depends(get_orchestrato
         return orch.start_revise(task_id)
     except AlreadyRunning:
         raise HTTPException(409, f"task {task_id} is already running")
+    except QuotaExceeded as exc:
+        raise HTTPException(429, str(exc))
     except ReviseError as exc:
         raise HTTPException(409, str(exc))
 

@@ -306,6 +306,21 @@ def test_list_projects_and_tasks(client, repo):
     assert [t["id"] for t in tasks] == [tid]
 
 
+def test_run_rejects_over_budget_before_starting(client, repo):
+    pid, tid = _make_project_and_task(client, repo)
+
+    r = client.patch(
+        f"/projects/{pid}/quotas",
+        json={"quota_tokens": 0, "quota_cost_usd": None},
+    )
+    assert r.status_code == 200
+
+    r = client.post(f"/tasks/{tid}/run")
+    assert r.status_code == 429
+    assert "Token quota exceeded" in r.json()["detail"]
+    assert client.get(f"/tasks/{tid}").json()["status"] == "draft"
+
+
 # --------------------------------------------------------------------------
 # planner / router
 # --------------------------------------------------------------------------

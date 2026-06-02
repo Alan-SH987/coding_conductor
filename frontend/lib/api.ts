@@ -14,6 +14,8 @@ export interface Project {
   is_archived: boolean;
   deleted_at: string | null;
   created_at: string;
+  quota_tokens: number | null;
+  quota_cost_usd: number | null;
   verify_cmd: string | null;
   enabled_skills: string | null;
 }
@@ -64,6 +66,23 @@ export interface Run {
   diff_ref: string | null;
   started_at: string;
   ended_at: string | null;
+}
+
+export interface ProjectUsage {
+  project_id: number;
+  usage: {
+    total_tokens: number;
+    total_cost_usd: number;
+    run_count: number;
+  };
+  quotas: {
+    quota_tokens: number | null;
+    quota_cost_usd: number | null;
+  };
+  usage_percentage: {
+    tokens: number | null;
+    cost: number | null;
+  };
 }
 
 export interface Event {
@@ -188,6 +207,16 @@ export const api = {
   archiveProject: (id: number) => post<Project>(`/projects/${id}/archive`),
   unarchiveProject: (id: number) => post<Project>(`/projects/${id}/unarchive`),
   deleteProject: (id: number) => del<Project>(`/projects/${id}`),
+  getProjectUsage: (id: number) => http<ProjectUsage>(`/projects/${id}/usage`),
+  updateProjectQuotas: (
+    id: number,
+    quotaTokens: number | null,
+    quotaCostUsd: number | null,
+  ) =>
+    patch<Project>(`/projects/${id}/quotas`, {
+      quota_tokens: quotaTokens,
+      quota_cost_usd: quotaCostUsd,
+    }),
   updateProjectVerify: (id: number, verifyCmd: string | null) =>
     patch<Project>(`/projects/${id}/verify`, { verify_cmd: verifyCmd }),
   listSkills: () => http<Skill[]>("/skills"),
