@@ -41,6 +41,7 @@ export interface Task {
   id: number;
   project_id: number;
   parent_id: number | null;
+  source_task_id: number | null; // Provenance: task this was derived from
   title: string;
   description: string;
   status: TaskStatus;
@@ -258,7 +259,13 @@ export const api = {
     title: string,
     description: string,
     agent: string,
-  ) => post<Task>(`/projects/${projectId}/tasks`, { title, description, agent }),
+    sourceTaskId?: number,
+  ) => post<Task>(`/projects/${projectId}/tasks`, {
+    title,
+    description,
+    agent,
+    source_task_id: sourceTaskId,
+  }),
   uploadTaskAttachments: (taskId: number, files: File[]) => {
     const formData = new FormData();
     for (const file of files) formData.append("files", file);

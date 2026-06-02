@@ -133,9 +133,15 @@ class Orchestrator:
             return proj
 
     # ---------- tasks ----------
-    def create_task(self, project_id: int, title: str, description: str = "",
-                    agent: str = "claude",
-                    parent_id: Optional[int] = None) -> models.Task:
+    def create_task(
+        self,
+        project_id: int,
+        title: str,
+        description: str = "",
+        agent: str = "claude",
+        parent_id: Optional[int] = None,
+        source_task_id: Optional[int] = None,
+    ) -> models.Task:
         # Use intelligent routing if "auto" is specified
         if agent == "auto":
             available_models = list(self.adapters.keys())
@@ -148,6 +154,7 @@ class Orchestrator:
                 project_id=project_id, title=title, description=description,
                 assigned_agent=agent, status=TaskStatus.draft.value,
                 parent_id=parent_id,
+                source_task_id=source_task_id,
             )
             s.add(task)
             s.commit()
@@ -359,6 +366,7 @@ class Orchestrator:
             project_id = task.project_id
             enabled_skills = project.enabled_skills
             task_tags = json.loads(task.tags) if task.tags else None
+            source_task_id = task.source_task_id
 
         # Check quota before starting the run
         try:
@@ -382,9 +390,17 @@ class Orchestrator:
             project_path, task_id, handle.path
         )
 
+        # Build source task context if this task was derived from another
+        source_context = self._build_source_task_context(source_task_id) if source_task_id else None
+
         spec = TaskSpec(goal=self._compose_goal_with_attachments(spec_goal, attachment_paths))
         bundle_parts = [
-            memory.build_context_bundle(project_path, query=spec_goal, query_tags=task_tags),
+            memory.build_context_bundle(
+                project_path,
+                query=spec_goal,
+                query_tags=task_tags,
+                source_task_context=source_context,
+            ),
             skills.build_skills_bundle(skills.parse_enabled(enabled_skills)),
         ]
         return await self._drive_run_with_retries(
@@ -752,6 +768,34 @@ class Orchestrator:
             if text:
                 (finals if e.type == "final" else messages).append(text)
         return finals[-1] if finals else (messages[-1] if messages else "")
+
+    def _build_source_task_context(
+        self, source_task_id: int
+    ) -> Optional[memory.SourceTaskContext]:
+        """Build context from a source (provenance) task to inject into derived tasks.
+
+        When a task is created "based on" another task (e.g., from suggestions or
+        follow-up work), this method retrieves the source task's full details so
+        the new task's agent understands what was already done.
+        """
+        with Session(self.engine) as s:
+            source_task = s.get(models.Task, source_task_id)
+            if source_task is None:
+                return None
+
+            # Get the agent's final summary of what was done
+            handoff_summary = self._last_agent_message(source_task_id)
+
+            # Get files changed in the source task
+            files_changed = self._changed_files(source_task_id)
+
+            return memory.SourceTaskContext(
+                source_task_id=source_task_id,
+                title=source_task.title,
+                description=source_task.description or "",
+                handoff_summary=handoff_summary,
+                files_changed=files_changed,
+            )
 
     def _record_handoff(self, task, project, outcome: str = "merged") -> None:
         """Distill a finished task into a shared-memory handoff entry (best-effort).

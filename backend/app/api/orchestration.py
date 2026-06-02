@@ -72,6 +72,7 @@ class TaskCreate(BaseModel):
     title: str
     description: str = ""
     agent: str = "claude"
+    source_task_id: Optional[int] = None  # Provenance: task this was derived from
 
 
 class AttachmentOut(BaseModel):
@@ -353,7 +354,18 @@ def create_task(
     # it's valid here even though it isn't a registered adapter.
     if body.agent != "auto" and body.agent not in orch.adapters:
         raise HTTPException(400, f"unknown agent {body.agent!r}")
-    return orch.create_task(project_id, body.title, body.description, body.agent)
+    # Validate source_task_id if provided
+    if body.source_task_id is not None:
+        source_task = orch.get_task(body.source_task_id)
+        if source_task is None:
+            raise HTTPException(400, f"source task {body.source_task_id} not found")
+        # Source task must belong to the same project
+        if source_task.project_id != project_id:
+            raise HTTPException(400, "source task must belong to the same project")
+    return orch.create_task(
+        project_id, body.title, body.description, body.agent,
+        source_task_id=body.source_task_id,
+    )
 
 
 @router.post("/tasks/{task_id}/attachments", response_model=list[AttachmentOut])

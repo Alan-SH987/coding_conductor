@@ -52,6 +52,11 @@ class Task(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     project_id: int = Field(foreign_key="project.id")
     parent_id: Optional[int] = Field(default=None, foreign_key="task.id")
+    # source_task_id: the task this one was "derived from" (e.g., created from a
+    # suggestion in that task). Unlike parent_id (subtask relationship), this is
+    # a provenance link — the source task's full context is injected into this
+    # task's agent run so it knows what was already done / what remains.
+    source_task_id: Optional[int] = Field(default=None, foreign_key="task.id")
     title: str
     description: str = ""
     status: str = Field(default=TaskStatus.draft.value)
