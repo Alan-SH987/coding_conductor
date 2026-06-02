@@ -48,7 +48,7 @@ export function AgentsHealth() {
       {data?.map((a) => (
         <span key={a.name} title={agentTitle(a)} className="flex items-center gap-1">
           <span className={`inline-block h-2 w-2 rounded-full ${DOT[a.status]}`} />
-          <span className="text-zinc-300">{a.name}</span>
+          <span className="text-foreground">{a.name}</span>
         </span>
       ))}
       {error && <span className="max-w-[12rem] truncate text-red-400" title={error}>{error}</span>}
@@ -57,7 +57,7 @@ export function AgentsHealth() {
         onClick={check}
         disabled={loading}
         title="Probe each AI CLI now (spends a tiny bit of quota each time)"
-        className="rounded-md border border-zinc-800 px-2 py-1 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200 disabled:opacity-50"
+        className="rounded-md border border-border px-2 py-1 text-muted-foreground hover:border-border hover:text-foreground disabled:opacity-50"
       >
         {loading ? "checking…" : data ? "↻ agents" : "check agents"}
       </button>

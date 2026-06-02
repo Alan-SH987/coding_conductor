@@ -90,24 +90,24 @@ export default function HomePage() {
       <section>
         <div className="mb-4 flex items-center justify-between">
           <h1 className="text-xl font-semibold">Projects</h1>
-          <label className="flex items-center gap-2 text-sm text-zinc-400">
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
             <input
               type="checkbox"
               checked={showArchived}
               onChange={(e) => setShowArchived(e.target.checked)}
-              className="rounded border-zinc-600"
+              className="rounded border-ring"
             />
             Show archived
           </label>
         </div>
         {projects.length === 0 ? (
-          <p className="text-sm text-zinc-500">No projects yet.</p>
+          <p className="text-sm text-muted-foreground">No projects yet.</p>
         ) : (
           <div className="space-y-2">
             {projects.map((p) => (
               <Link key={p.id} href={`/projects/${p.id}`} className="block">
                 <Card
-                  className={`hover:border-zinc-600 ${
+                  className={`hover:border-ring ${
                     p.is_archived ? "opacity-60" : ""
                   }`}
                 >
@@ -120,22 +120,22 @@ export default function HomePage() {
                       )}
                       <span className="font-medium">{p.name}</span>
                       {p.is_archived && (
-                        <span className="rounded bg-zinc-700 px-1.5 py-0.5 text-xs text-zinc-400">
+                        <span className="rounded bg-secondary px-1.5 py-0.5 text-xs text-muted-foreground">
                           Archived
                         </span>
                       )}
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-zinc-500">
+                      <span className="text-xs text-muted-foreground">
                         {p.default_branch}
                       </span>
                       <div className="flex gap-1">
                         <button
                           onClick={(e) => handlePin(p, e)}
-                          className={`rounded p-1 text-xs hover:bg-zinc-700 ${
+                          className={`rounded p-1 text-xs hover:bg-secondary ${
                             p.is_pinned
                               ? "text-yellow-500"
-                              : "text-zinc-500 hover:text-yellow-500"
+                              : "text-muted-foreground hover:text-yellow-500"
                           }`}
                           title={p.is_pinned ? "Unpin" : "Pin"}
                         >
@@ -143,14 +143,14 @@ export default function HomePage() {
                         </button>
                         <button
                           onClick={(e) => handleArchive(p, e)}
-                          className="rounded p-1 text-xs text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300"
+                          className="rounded p-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
                           title={p.is_archived ? "Unarchive" : "Archive"}
                         >
                           {p.is_archived ? "↩" : "📦"}
                         </button>
                         <button
                           onClick={(e) => handleDelete(p, e)}
-                          className="rounded p-1 text-xs text-zinc-500 hover:bg-red-900 hover:text-red-300"
+                          className="rounded p-1 text-xs text-muted-foreground hover:bg-red-900 hover:text-red-300"
                           title="Delete"
                         >
                           🗑
@@ -158,7 +158,7 @@ export default function HomePage() {
                       </div>
                     </div>
                   </div>
-                  <div className="mt-1 truncate font-mono text-xs text-zinc-500">
+                  <div className="mt-1 truncate font-mono text-xs text-muted-foreground">
                     {p.path}
                   </div>
                 </Card>
@@ -169,7 +169,7 @@ export default function HomePage() {
       </section>
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-400">
+        <h2 className="mb-3 text-sm font-semibold text-muted-foreground">
           Add a project
         </h2>
         <Card>

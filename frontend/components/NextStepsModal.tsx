@@ -71,8 +71,8 @@ export function NextStepsModal({ taskId, onClose, onTasksSelected }: NextStepsMo
   if (loading) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
-        <div className="w-full max-w-2xl rounded-lg border border-zinc-700 bg-zinc-900 p-6">
-          <div className="text-center text-zinc-400">Loading next steps...</div>
+        <div className="w-full max-w-2xl rounded-lg border border-border bg-card p-6">
+          <div className="text-center text-muted-foreground">Loading next steps...</div>
         </div>
       </div>
     );
@@ -82,12 +82,12 @@ export function NextStepsModal({ taskId, onClose, onTasksSelected }: NextStepsMo
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
-      <div className="w-full max-w-2xl rounded-lg border border-zinc-700 bg-zinc-900 p-6">
+      <div className="w-full max-w-2xl rounded-lg border border-border bg-card p-6">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-white">What's Next?</h2>
+          <h2 className="text-xl font-semibold text-foreground">What's Next?</h2>
           <button
             onClick={onClose}
-            className="text-zinc-400 hover:text-white"
+            className="text-muted-foreground hover:text-foreground"
             aria-label="Close"
           >
             ✕
@@ -101,7 +101,7 @@ export function NextStepsModal({ taskId, onClose, onTasksSelected }: NextStepsMo
         )}
 
         {!hasAnyTasks && (
-          <div className="mb-6 text-center text-zinc-400">
+          <div className="mb-6 text-center text-muted-foreground">
             <p className="mb-4">No pending tasks found in this project.</p>
             {parent && (
               <Link href={`/tasks/${parent.id}`}>
@@ -115,7 +115,7 @@ export function NextStepsModal({ taskId, onClose, onTasksSelected }: NextStepsMo
 
         {siblingTasks.length > 0 && (
           <div className="mb-6">
-            <h3 className="mb-3 text-sm font-medium text-zinc-300">
+            <h3 className="mb-3 text-sm font-medium text-foreground">
               Related Subtasks ({siblingTasks.length})
             </h3>
             <div className="space-y-2">
@@ -133,7 +133,7 @@ export function NextStepsModal({ taskId, onClose, onTasksSelected }: NextStepsMo
 
         {pendingTasks.length > 0 && (
           <div className="mb-6">
-            <h3 className="mb-3 text-sm font-medium text-zinc-300">
+            <h3 className="mb-3 text-sm font-medium text-foreground">
               Other Pending Tasks ({pendingTasks.length})
             </h3>
             <div className="space-y-2">
@@ -149,8 +149,8 @@ export function NextStepsModal({ taskId, onClose, onTasksSelected }: NextStepsMo
           </div>
         )}
 
-        <div className="flex items-center justify-between border-t border-zinc-800 pt-4">
-          <div className="text-sm text-zinc-400">
+        <div className="flex items-center justify-between border-t border-border pt-4">
+          <div className="text-sm text-muted-foreground">
             {selectedTaskIds.length > 0
               ? `${selectedTaskIds.length} task${selectedTaskIds.length > 1 ? "s" : ""} selected`
               : "Select tasks to work on next"}
@@ -185,7 +185,7 @@ function TaskCard({ task, selected, onToggle }: TaskCardProps) {
       className={`cursor-pointer rounded border p-3 transition ${
         selected
           ? "border-blue-600 bg-blue-900/20"
-          : "border-zinc-800 bg-zinc-900/50 hover:border-zinc-700"
+          : "border-border bg-card/50 hover:border-border"
       }`}
       onClick={onToggle}
     >
@@ -197,19 +197,19 @@ function TaskCard({ task, selected, onToggle }: TaskCardProps) {
               checked={selected}
               onChange={onToggle}
               onClick={(e) => e.stopPropagation()}
-              className="rounded border-zinc-700"
+              className="rounded border-border"
             />
             <Link
               href={`/tasks/${task.id}`}
               onClick={(e) => e.stopPropagation()}
-              className="font-medium text-white hover:text-blue-400"
+              className="font-medium text-foreground hover:text-blue-400"
             >
               {task.title}
             </Link>
             <Badge status={task.status} />
           </div>
           {task.description && (
-            <p className="ml-6 mt-1 text-sm text-zinc-400 line-clamp-2">
+            <p className="ml-6 mt-1 text-sm text-muted-foreground line-clamp-2">
               {task.description}
             </p>
           )}

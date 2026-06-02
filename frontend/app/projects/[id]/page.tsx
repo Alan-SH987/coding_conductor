@@ -415,7 +415,7 @@ export default function ProjectPage({
                       if (e.key === "Escape") setEditingVerify(false);
                     }}
                     placeholder="e.g. cd frontend && npm run build"
-                    className="w-80 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 font-mono outline-none focus:border-zinc-500"
+                    className="w-80 rounded-md border border-border bg-card px-2 py-1 font-mono outline-none focus:border-ring"
                     autoFocus
                   />
                   <Button onClick={saveVerify} disabled={savingVerify} className="px-2 py-1">
@@ -424,7 +424,7 @@ export default function ProjectPage({
                   <button
                     type="button"
                     onClick={() => setEditingVerify(false)}
-                    className="text-zinc-500 hover:text-zinc-300"
+                    className="text-muted-foreground hover:text-foreground"
                   >
                     Cancel
                   </button>
@@ -437,10 +437,10 @@ export default function ProjectPage({
                     setEditingVerify(true);
                   }}
                   title="Command run against the merged result before a task lands on main. Click to edit."
-                  className="flex max-w-md items-center gap-1.5 rounded-md border border-zinc-800 px-2 py-1 hover:border-zinc-700"
+                  className="flex max-w-md items-center gap-1.5 rounded-md border border-border px-2 py-1 hover:border-border"
                 >
-                  <span className="text-zinc-500">verify gate:</span>
-                  <span className="truncate font-mono text-zinc-300">
+                  <span className="text-muted-foreground">verify gate:</span>
+                  <span className="truncate font-mono text-foreground">
                     {project?.verify_cmd ? project.verify_cmd : "off"}
                   </span>
                 </button>
@@ -451,7 +451,7 @@ export default function ProjectPage({
           {/* Tag filter bar */}
           {allTags.length > 0 && (
             <div className="mb-2 flex flex-wrap items-center gap-2">
-              <span className="text-xs text-zinc-500">Filter by tag:</span>
+              <span className="text-xs text-muted-foreground">Filter by tag:</span>
               {allTags.map((tag) => (
                 <button
                   key={tag}
@@ -460,7 +460,7 @@ export default function ProjectPage({
                   className={`rounded-md border px-2 py-0.5 text-xs transition-colors ${
                     selectedTags.has(tag)
                       ? "border-blue-600 bg-blue-950/60 text-blue-300"
-                      : "border-zinc-700 bg-zinc-900/40 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300"
+                      : "border-border bg-card/40 text-muted-foreground hover:border-ring hover:text-foreground"
                   }`}
                 >
                   {tag}
@@ -470,7 +470,7 @@ export default function ProjectPage({
                 <button
                   type="button"
                   onClick={() => setSelectedTags(new Set())}
-                  className="text-xs text-zinc-500 hover:text-zinc-300"
+                  className="text-xs text-muted-foreground hover:text-foreground"
                 >
                   Clear
                 </button>
@@ -478,13 +478,13 @@ export default function ProjectPage({
             </div>
           )}
 
-          <div className="flex-1 space-y-4 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
+          <div className="flex-1 space-y-4 overflow-y-auto rounded-lg border border-border bg-background/40 p-4">
             {tasks.length === 0 ? (
-              <p className="text-sm text-zinc-500">
+              <p className="text-sm text-muted-foreground">
                 No tasks yet. Send a message below to create one.
               </p>
             ) : filteredTasks.length === 0 ? (
-              <p className="text-sm text-zinc-500">
+              <p className="text-sm text-muted-foreground">
                 No tasks match the selected tags.
               </p>
             ) : (
@@ -527,7 +527,7 @@ export default function ProjectPage({
                   ✕
                 </button>
               </div>
-              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs text-zinc-300">
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs text-foreground">
                 {verifyFail.output || "(no output)"}
               </pre>
             </div>
@@ -545,12 +545,12 @@ export default function ProjectPage({
               }}
               rows={2}
               placeholder="Describe a task…  (Enter to send, Shift+Enter for newline)"
-              className="flex-1 resize-none rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-zinc-500"
+              className="flex-1 resize-none rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-ring"
             />
             <select
               value={agent}
               onChange={(e) => setAgent(e.target.value)}
-              className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm outline-none focus:border-zinc-500"
+              className="rounded-md border border-border bg-card px-2 py-2 text-sm outline-none focus:border-ring"
             >
               {realAgents.map((a) => (
                 <option key={a.name} value={a.name}>

@@ -74,8 +74,8 @@ function PanelChip({
       onClick={onClick}
       className={`rounded-md border px-2 py-1 text-xs transition-colors ${
         active
-          ? "border-zinc-600 bg-zinc-800 text-zinc-100"
-          : "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+          ? "border-ring bg-muted text-foreground"
+          : "border-border bg-card/40 text-muted-foreground hover:border-border hover:text-foreground"
       }`}
     >
       {label}
@@ -142,23 +142,23 @@ export function ConversationTurn({
   return (
     <div className="space-y-2">
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-lg rounded-br-sm bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
+        <div className="max-w-[85%] rounded-lg rounded-br-sm bg-muted px-3 py-2 text-sm text-foreground">
           {task.parent_id && (
-            <div className="mb-1 text-[10px] text-zinc-500">
+            <div className="mb-1 text-[10px] text-muted-foreground">
               ↳ subtask of #{task.parent_id}
             </div>
           )}
           <div className="whitespace-pre-wrap break-words">{task.title}</div>
           {task.description && (
-            <div className="mt-1 whitespace-pre-wrap break-words text-xs text-zinc-400">
+            <div className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">
               {task.description}
             </div>
           )}
         </div>
       </div>
 
-      <div className="max-w-[92%] space-y-2 rounded-lg rounded-bl-sm border border-zinc-800 bg-zinc-900/40 px-3 py-2">
-        <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+      <div className="max-w-[92%] space-y-2 rounded-lg rounded-bl-sm border border-border bg-card/40 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span className="font-mono">#{task.id}</span>
           <Badge status={task.status} />
           <span>{task.assigned_agent ?? "—"}</span>
@@ -170,7 +170,7 @@ export function ConversationTurn({
               return tags.map((tag) => (
                 <span
                   key={tag}
-                  className="rounded-sm bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400"
+                  className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
                 >
                   {tag}
                 </span>
@@ -181,7 +181,7 @@ export function ConversationTurn({
           })()}
           <Link
             href={`/tasks/${task.id}`}
-            className="ml-auto text-zinc-500 hover:text-zinc-300"
+            className="ml-auto text-muted-foreground hover:text-foreground"
           >
             open ↗
           </Link>
@@ -198,7 +198,7 @@ export function ConversationTurn({
                   : "Starting..."}
               </span>
               {progress.lastTool && (
-                <span className="font-mono text-zinc-500">
+                <span className="font-mono text-muted-foreground">
                   [{progress.lastTool}]
                 </span>
               )}
@@ -213,7 +213,7 @@ export function ConversationTurn({
               )}
             </div>
             {progress.currentAction && (
-              <div className="mt-1.5 truncate text-zinc-300">
+              <div className="mt-1.5 truncate text-foreground">
                 {progress.currentAction}
               </div>
             )}
@@ -222,17 +222,17 @@ export function ConversationTurn({
 
         {/* Persisted progress info (shown after stream ends) */}
         {!streaming && persistedProgress && persistedProgress.toolCalls > 0 && (
-          <div className="rounded-md border border-zinc-700/40 bg-zinc-800/30 px-2.5 py-2 text-xs">
-            <div className="flex items-center gap-2 text-zinc-400">
+          <div className="rounded-md border border-border/40 bg-muted/30 px-2.5 py-2 text-xs">
+            <div className="flex items-center gap-2 text-muted-foreground">
               <span>{persistedProgress.toolCalls} tool calls</span>
               {persistedProgress.lastTool && (
-                <span className="font-mono text-zinc-500">
+                <span className="font-mono text-muted-foreground">
                   [{persistedProgress.lastTool}]
                 </span>
               )}
             </div>
             {persistedProgress.summary && (
-              <div className="mt-1.5 whitespace-pre-wrap text-zinc-300">
+              <div className="mt-1.5 whitespace-pre-wrap text-foreground">
                 {persistedProgress.summary.length > 500
                   ? persistedProgress.summary.slice(0, 500) + "..."
                   : persistedProgress.summary}
@@ -298,7 +298,7 @@ export function ConversationTurn({
                 className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors ${
                   activeKind === "live"
                     ? "border-green-700 bg-green-950/40 text-green-300"
-                    : "border-zinc-800 bg-zinc-900/40 text-zinc-300 hover:border-zinc-700"
+                    : "border-border bg-card/40 text-foreground hover:border-border"
                 }`}
               >
                 <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-green-400" />

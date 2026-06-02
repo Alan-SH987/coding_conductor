@@ -24,24 +24,24 @@ function parsePayload(json: string): { text?: string; data?: Record<string, unkn
 }
 
 const EVENT_COLOR: Record<string, string> = {
-  meta: "text-zinc-500",
-  message: "text-zinc-100",
+  meta: "text-muted-foreground",
+  message: "text-foreground",
   thinking: "text-indigo-300",
   tool_use: "text-blue-300",
-  tool_result: "text-zinc-400",
+  tool_result: "text-muted-foreground",
   final: "text-green-300",
-  cost: "text-zinc-500",
+  cost: "text-muted-foreground",
   error: "text-red-400",
-  diff_ready: "text-zinc-500",
+  diff_ready: "text-muted-foreground",
 };
 
 function EventRow({ ev }: { ev: ApiEvent }) {
   const { text, data } = parsePayload(ev.payload_json);
-  const color = EVENT_COLOR[ev.type] ?? "text-zinc-300";
+  const color = EVENT_COLOR[ev.type] ?? "text-foreground";
   const detail = text ?? (data ? JSON.stringify(data) : "");
   return (
     <div className="flex gap-2">
-      <span className="shrink-0 text-zinc-600">{ev.type}</span>
+      <span className="shrink-0 text-muted-foreground">{ev.type}</span>
       <span className={`whitespace-pre-wrap break-words ${color}`}>{detail}</span>
     </div>
   );
@@ -298,7 +298,7 @@ export default function TaskPage({ params }: { params: { id: string } }) {
                 ? `/tasks/${task.parent_id}`
                 : `/projects/${task.project_id}`
             }
-            className="text-xs text-zinc-500 hover:text-zinc-300"
+            className="text-xs text-muted-foreground hover:text-foreground"
           >
             {task.parent_id ? "← parent task" : "← project"}
           </a>
@@ -310,12 +310,12 @@ export default function TaskPage({ params }: { params: { id: string } }) {
           {task && <Badge status={task.status} />}
         </div>
         {task?.description && (
-          <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-400">
+          <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
             {task.description}
           </p>
         )}
         {task && (
-          <div className="mt-1 text-xs text-zinc-500">
+          <div className="mt-1 text-xs text-muted-foreground">
             agent: {task.assigned_agent ?? "—"}
             {task.branch ? ` · ${task.branch}` : ""}
           </div>
@@ -355,16 +355,16 @@ export default function TaskPage({ params }: { params: { id: string } }) {
 
       {children.length > 0 && (
         <section>
-          <h2 className="mb-3 text-sm font-semibold text-zinc-400">Subtasks</h2>
+          <h2 className="mb-3 text-sm font-semibold text-muted-foreground">Subtasks</h2>
           <div className="space-y-2">
             {children.map((c) => (
               <a key={c.id} href={`/tasks/${c.id}`} className="block">
-                <Card className="hover:border-zinc-600">
+                <Card className="hover:border-ring">
                   <div className="flex items-center justify-between gap-3">
                     <span className="truncate font-medium">{c.title}</span>
                     <Badge status={c.status} />
                   </div>
-                  <div className="mt-1 text-xs text-zinc-500">
+                  <div className="mt-1 text-xs text-muted-foreground">
                     agent: {c.assigned_agent ?? "—"}
                     {c.branch ? ` · ${c.branch}` : ""}
                   </div>
@@ -377,9 +377,9 @@ export default function TaskPage({ params }: { params: { id: string } }) {
 
       {running && (
         <section>
-          <h2 className="mb-3 text-sm font-semibold text-zinc-400">Live run</h2>
+          <h2 className="mb-3 text-sm font-semibold text-muted-foreground">Live run</h2>
           <Card>
-            <div className="mb-3 flex items-center justify-between text-xs text-zinc-500">
+            <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
               <span>{task?.assigned_agent ?? "agent"} · streaming</span>
               <span className="flex items-center gap-2">
                 <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-green-400" />
@@ -388,7 +388,7 @@ export default function TaskPage({ params }: { params: { id: string } }) {
             </div>
             <div className="space-y-1 font-mono text-xs">
               {liveEvents.length === 0 ? (
-                <div className="text-zinc-600">waiting for first event…</div>
+                <div className="text-muted-foreground">waiting for first event…</div>
               ) : (
                 liveEvents.map((ev) => <EventRow key={ev.id} ev={ev} />)
               )}
@@ -398,16 +398,16 @@ export default function TaskPage({ params }: { params: { id: string } }) {
       )}
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold text-zinc-400">Runs</h2>
+        <h2 className="mb-3 text-sm font-semibold text-muted-foreground">Runs</h2>
         {visibleRuns.length === 0 ? (
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-muted-foreground">
             {running ? "Run in progress…" : "No runs yet."}
           </p>
         ) : (
           <div className="space-y-4">
             {visibleRuns.map((r) => (
               <Card key={r.id}>
-                <div className="mb-3 flex items-center justify-between text-xs text-zinc-500">
+                <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
                   <span>
                     run #{r.id} · {r.agent}
                     {r.session_id ? ` · ${r.session_id}` : ""}
@@ -432,27 +432,27 @@ export default function TaskPage({ params }: { params: { id: string } }) {
 
       {review && (
         <section>
-          <h2 className="mb-3 text-sm font-semibold text-zinc-400">AI Review</h2>
+          <h2 className="mb-3 text-sm font-semibold text-muted-foreground">AI Review</h2>
           <Card>
-            <div className="mb-3 flex items-center justify-between text-xs text-zinc-500">
+            <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
               <span>{review.agent}</span>
               <Badge status={review.verdict} />
             </div>
             {review.summary && (
-              <p className="mb-3 whitespace-pre-wrap text-sm text-zinc-300">
+              <p className="mb-3 whitespace-pre-wrap text-sm text-foreground">
                 {review.summary}
               </p>
             )}
             {review.findings.length === 0 ? (
-              <p className="text-xs text-zinc-500">No findings.</p>
+              <p className="text-xs text-muted-foreground">No findings.</p>
             ) : (
               <ul className="space-y-2">
                 {review.findings.map((f, i) => (
                   <li key={i} className="flex gap-2 text-sm">
                     <Badge status={f.severity} />
-                    <span className="text-zinc-300">
+                    <span className="text-foreground">
                       {f.file && (
-                        <span className="font-mono text-xs text-zinc-500">
+                        <span className="font-mono text-xs text-muted-foreground">
                           {f.file}:{" "}
                         </span>
                       )}
@@ -468,8 +468,8 @@ export default function TaskPage({ params }: { params: { id: string } }) {
 
       {diff && (
         <section>
-          <h2 className="mb-3 text-sm font-semibold text-zinc-400">Diff</h2>
-          <pre className="overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 text-xs leading-relaxed text-zinc-300">
+          <h2 className="mb-3 text-sm font-semibold text-muted-foreground">Diff</h2>
+          <pre className="overflow-x-auto rounded-lg border border-border bg-card/50 p-4 text-xs leading-relaxed text-foreground">
             {diff}
           </pre>
         </section>

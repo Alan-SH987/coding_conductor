@@ -54,24 +54,24 @@ export function SkillsControl({
         type="button"
         onClick={toggleOpen}
         title="Skills injected into this project's agent runs"
-        className="rounded-md border border-zinc-800 px-2 py-1 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+        className="rounded-md border border-border px-2 py-1 text-muted-foreground hover:border-border hover:text-foreground"
       >
         skills{enabled.length ? ` (${enabled.length})` : ""}
       </button>
       {open && (
-        <div className="absolute right-0 z-30 mt-1 w-72 rounded-md border border-zinc-800 bg-zinc-950 p-2 shadow-xl">
+        <div className="absolute right-0 z-30 mt-1 w-72 rounded-md border border-border bg-background p-2 shadow-xl">
           {error && <p className="px-1 pb-1 text-red-400">{error}</p>}
           {installed === null ? (
-            <p className="px-1 text-zinc-500">loading…</p>
+            <p className="px-1 text-muted-foreground">loading…</p>
           ) : installed.length === 0 ? (
-            <p className="px-1 text-zinc-500">
+            <p className="px-1 text-muted-foreground">
               No skills installed. Drop a folder into ~/.conductor/skills/.
             </p>
           ) : (
             <ul className="space-y-1">
               {installed.map((s) => (
                 <li key={s.name}>
-                  <label className="flex cursor-pointer items-start gap-2 rounded px-1 py-1 hover:bg-zinc-900">
+                  <label className="flex cursor-pointer items-start gap-2 rounded px-1 py-1 hover:bg-card">
                     <input
                       type="checkbox"
                       checked={enabled.includes(s.name)}
@@ -80,9 +80,9 @@ export function SkillsControl({
                       className="mt-0.5"
                     />
                     <span>
-                      <span className="text-zinc-200">{s.name}</span>
+                      <span className="text-foreground">{s.name}</span>
                       {s.description && (
-                        <span className="block text-[10px] text-zinc-500">
+                        <span className="block text-[10px] text-muted-foreground">
                           {s.description}
                         </span>
                       )}

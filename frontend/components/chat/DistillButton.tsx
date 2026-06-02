@@ -33,18 +33,18 @@ export function DistillButton({ projectId }: { projectId: number }) {
         onClick={distill}
         disabled={busy}
         title="Distill accumulated task handoffs into high-level insights (insights.md)"
-        className="rounded-md border border-zinc-800 px-2 py-1 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200 disabled:opacity-50"
+        className="rounded-md border border-border px-2 py-1 text-muted-foreground hover:border-border hover:text-foreground disabled:opacity-50"
       >
         {busy ? "distilling…" : "distill memory"}
       </button>
       {open && (
-        <div className="absolute right-0 z-30 mt-1 w-80 rounded-md border border-zinc-800 bg-zinc-950 p-2 shadow-xl">
+        <div className="absolute right-0 z-30 mt-1 w-80 rounded-md border border-border bg-background p-2 shadow-xl">
           <div className="mb-1 flex items-center justify-between">
-            <span className="text-zinc-300">Distilled insights</span>
+            <span className="text-foreground">Distilled insights</span>
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="text-zinc-500 hover:text-zinc-300"
+              className="text-muted-foreground hover:text-foreground"
             >
               ✕
             </button>
@@ -52,11 +52,11 @@ export function DistillButton({ projectId }: { projectId: number }) {
           {error ? (
             <p className="text-red-400">{error}</p>
           ) : insights ? (
-            <pre className="max-h-60 overflow-auto whitespace-pre-wrap text-[11px] text-zinc-300">
+            <pre className="max-h-60 overflow-auto whitespace-pre-wrap text-[11px] text-foreground">
               {insights}
             </pre>
           ) : (
-            <p className="text-zinc-500">
+            <p className="text-muted-foreground">
               No handoffs to distill yet — merge or reject a task first.
             </p>
           )}
