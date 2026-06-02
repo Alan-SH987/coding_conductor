@@ -79,6 +79,38 @@ export default function ProjectPage({
   const [isDragging, setIsDragging] = useState(false);
   const dragCounterRef = useRef(0);
 
+  // Extract progress info from a list of events (for historical tasks)
+  function extractProgressFromEvents(
+    events: ApiEvent[],
+  ): { toolCalls: number; lastTool: string | null; summary: string | null } {
+    let toolCalls = 0;
+    let lastTool: string | null = null;
+    let summary: string | null = null;
+
+    for (const ev of events) {
+      if (ev.type === "tool_use") {
+        toolCalls++;
+        try {
+          const p = JSON.parse(ev.payload_json);
+          lastTool = p.tool || p.name || null;
+        } catch {
+          // ignore
+        }
+      } else if (ev.type === "final") {
+        try {
+          const p = JSON.parse(ev.payload_json);
+          if (p.text) {
+            summary = p.text;
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    return { toolCalls, lastTool, summary };
+  }
+
   async function load(): Promise<Task[]> {
     const [ps, p, u, t, a] = await Promise.all([
       api.listProjects(),
@@ -93,6 +125,45 @@ export default function ProjectPage({
     setTasks([...t].sort((x, y) => x.id - y.id));
     setAgents(a);
     setReloadNonce((n) => n + 1);
+
+    // Load historical progress for completed tasks that don't have progress yet
+    const completedStatuses = ["awaiting_approval", "merged", "rejected", "failed"];
+    const tasksNeedingProgress = t.filter(
+      (task) =>
+        completedStatuses.includes(task.status) &&
+        !taskProgress[task.id],
+    );
+
+    if (tasksNeedingProgress.length > 0) {
+      // Fetch runs and events for tasks without progress info
+      // Limit concurrent requests to avoid overwhelming the server
+      const progressPromises = tasksNeedingProgress.slice(0, 20).map(async (task) => {
+        try {
+          const runs = await api.listRuns(task.id);
+          if (runs.length === 0) return null;
+          // Get the most recent run
+          const latestRun = runs.reduce((a, b) => (a.id > b.id ? a : b));
+          const events = await api.listEvents(latestRun.id);
+          const progress = extractProgressFromEvents(events);
+          return { taskId: task.id, progress };
+        } catch {
+          return null;
+        }
+      });
+
+      const results = await Promise.all(progressPromises);
+      const newProgress: Record<number, { toolCalls: number; lastTool: string | null; summary: string | null }> = {};
+      for (const result of results) {
+        if (result && result.progress.toolCalls > 0) {
+          newProgress[result.taskId] = result.progress;
+        }
+      }
+
+      if (Object.keys(newProgress).length > 0) {
+        setTaskProgress((prev) => ({ ...prev, ...newProgress }));
+      }
+    }
+
     return t;
   }
 

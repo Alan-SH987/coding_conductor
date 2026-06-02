@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { type Task, type Event as ApiEvent } from "@/lib/api";
 import { Badge, Button } from "@/components/ui";
@@ -80,6 +81,47 @@ function PanelChip({
     >
       {label}
     </button>
+  );
+}
+
+// Collapsible block showing persisted progress with expand/collapse for long summaries
+function PersistedProgressBlock({
+  progress,
+}: {
+  progress: { toolCalls: number; lastTool: string | null; summary: string | null };
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const PREVIEW_LENGTH = 300;
+  const summaryTooLong =
+    progress.summary && progress.summary.length > PREVIEW_LENGTH;
+
+  return (
+    <div className="rounded-md border border-border/40 bg-muted/30 px-2.5 py-2 text-xs">
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <span>{progress.toolCalls} tool calls</span>
+        {progress.lastTool && (
+          <span className="font-mono text-muted-foreground">
+            [{progress.lastTool}]
+          </span>
+        )}
+        {summaryTooLong && (
+          <button
+            type="button"
+            onClick={() => setExpanded((prev) => !prev)}
+            className="ml-auto text-blue-400 hover:text-blue-300"
+          >
+            {expanded ? "Collapse" : "Expand"}
+          </button>
+        )}
+      </div>
+      {progress.summary && (
+        <div className="mt-1.5 whitespace-pre-wrap text-foreground">
+          {expanded || !summaryTooLong
+            ? progress.summary
+            : progress.summary.slice(0, PREVIEW_LENGTH) + "..."}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -224,23 +266,7 @@ export function ConversationTurn({
 
         {/* Persisted progress info (shown after stream ends) */}
         {!streaming && persistedProgress && persistedProgress.toolCalls > 0 && (
-          <div className="rounded-md border border-border/40 bg-muted/30 px-2.5 py-2 text-xs">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <span>{persistedProgress.toolCalls} tool calls</span>
-              {persistedProgress.lastTool && (
-                <span className="font-mono text-muted-foreground">
-                  [{persistedProgress.lastTool}]
-                </span>
-              )}
-            </div>
-            {persistedProgress.summary && (
-              <div className="mt-1.5 whitespace-pre-wrap text-foreground">
-                {persistedProgress.summary.length > 500
-                  ? persistedProgress.summary.slice(0, 500) + "..."
-                  : persistedProgress.summary}
-              </div>
-            )}
-          </div>
+          <PersistedProgressBlock progress={persistedProgress} />
         )}
 
         {task.status === "failed" && task.error && (
