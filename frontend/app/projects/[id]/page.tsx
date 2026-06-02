@@ -67,9 +67,8 @@ export default function ProjectPage({
   // Bumped on every reload so the right-side panel re-fetches instead of showing
   // stale diff/review/activity data after a run finishes or a merge lands.
   const [reloadNonce, setReloadNonce] = useState(0);
-  // Follow-up task creation modal
+  // Follow-up task creation - uses the main input area instead of a modal
   const [followUpSourceId, setFollowUpSourceId] = useState<number | null>(null);
-  const [followUpTitle, setFollowUpTitle] = useState("");
   const [creatingFollowUp, setCreatingFollowUp] = useState(false);
 
   const esRef = useRef<EventSource | null>(null);
@@ -472,28 +471,34 @@ export default function ProjectPage({
     }
   }
 
-  function openFollowUpModal(sourceTaskId: number) {
-    const sourceTask = tasks.find((t) => t.id === sourceTaskId);
+  function startFollowUp(sourceTaskId: number) {
     setFollowUpSourceId(sourceTaskId);
-    setFollowUpTitle(sourceTask ? `Follow-up to: ${sourceTask.title}` : "");
+    setMessage(""); // Clear any existing message for fresh follow-up input
+  }
+
+  function cancelFollowUp() {
+    setFollowUpSourceId(null);
+    setMessage("");
   }
 
   async function createFollowUp() {
-    if (!followUpSourceId || !followUpTitle.trim()) return;
+    const trimmedMessage = message.trim();
+    if (!followUpSourceId || !trimmedMessage) return;
     setCreatingFollowUp(true);
     setError(null);
     try {
       const task = await api.createTask(
         projectId,
-        followUpTitle.trim(),
+        trimmedMessage,
         "",
         agent,
         followUpSourceId,
       );
       setFollowUpSourceId(null);
-      setFollowUpTitle("");
+      setMessage("");
+      clearAttachments();
       await load();
-      // Optionally auto-run the new task
+      // Auto-run the new task
       await api.runTask(task.id);
       openStream(task.id);
     } catch (e) {
@@ -795,7 +800,7 @@ export default function ProjectPage({
                   onReject={onReject}
                   onOpenPanel={openPanel}
                   onStop={onStop}
-                  onCreateFollowUp={openFollowUpModal}
+                  onCreateFollowUp={startFollowUp}
                 />
               ))
             )}
@@ -829,7 +834,9 @@ export default function ProjectPage({
             className={`relative mt-2 flex items-end gap-2 rounded-lg border-2 p-2 transition-colors ${
               isDragging
                 ? "border-dashed border-blue-500 bg-blue-500/10"
-                : "border-transparent"
+                : followUpSourceId !== null
+                  ? "border-blue-600/50 bg-blue-950/20"
+                  : "border-transparent"
             }`}
             onDragEnter={handleDragEnter}
             onDragLeave={handleDragLeave}
@@ -844,6 +851,21 @@ export default function ProjectPage({
               </div>
             )}
             <div className="flex flex-1 flex-col gap-2">
+              {/* Follow-up mode indicator */}
+              {followUpSourceId !== null && (
+                <div className="flex items-center justify-between rounded-md bg-blue-950/40 px-3 py-1.5 text-sm">
+                  <span className="text-blue-300">
+                    Follow-up to task #{followUpSourceId} — agent will inherit previous context
+                  </span>
+                  <button
+                    type="button"
+                    onClick={cancelFollowUp}
+                    className="ml-2 text-blue-400 hover:text-blue-200"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
               {attachments.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {attachments.map((item) => (
@@ -894,12 +916,24 @@ export default function ProjectPage({
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
-                    onSend();
+                    if (followUpSourceId !== null) {
+                      createFollowUp();
+                    } else {
+                      onSend();
+                    }
+                  }
+                  if (e.key === "Escape" && followUpSourceId !== null) {
+                    cancelFollowUp();
                   }
                 }}
                 rows={2}
-                placeholder="Describe a task… (drop files here, Enter to send)"
+                placeholder={
+                  followUpSourceId !== null
+                    ? "What should the agent do next? (Enter to send, Esc to cancel)"
+                    : "Describe a task… (drop files here, Enter to send)"
+                }
                 className="resize-none rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-ring"
+                autoFocus={followUpSourceId !== null}
               />
             </div>
             <input
@@ -932,11 +966,20 @@ export default function ProjectPage({
               ))}
             </select>
             <Button
-              onClick={onSend}
-              disabled={sending || (!message.trim() && attachments.length === 0)}
+              onClick={followUpSourceId !== null ? createFollowUp : onSend}
+              disabled={
+                (followUpSourceId !== null ? creatingFollowUp : sending) ||
+                (!message.trim() && attachments.length === 0)
+              }
               className="px-4"
             >
-              {sending ? "Sending…" : "Send"}
+              {followUpSourceId !== null
+                ? creatingFollowUp
+                  ? "Creating…"
+                  : "Follow-up"
+                : sending
+                  ? "Sending…"
+                  : "Send"}
             </Button>
           </div>
         </div>
@@ -950,56 +993,6 @@ export default function ProjectPage({
         />
       </div>
 
-      {/* Follow-up task creation modal */}
-      {followUpSourceId !== null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-lg rounded-lg border border-border bg-card p-4 shadow-xl">
-            <h2 className="mb-3 text-lg font-semibold text-foreground">
-              Create Follow-up Task
-            </h2>
-            <p className="mb-3 text-sm text-muted-foreground">
-              This task will inherit context from task #{followUpSourceId}, so the
-              agent will know what was already done and can continue from there.
-            </p>
-            <textarea
-              value={followUpTitle}
-              onChange={(e) => setFollowUpTitle(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  createFollowUp();
-                }
-                if (e.key === "Escape") {
-                  setFollowUpSourceId(null);
-                  setFollowUpTitle("");
-                }
-              }}
-              rows={3}
-              placeholder="What should the agent do next?"
-              className="mb-3 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-              autoFocus
-            />
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setFollowUpSourceId(null);
-                  setFollowUpTitle("");
-                }}
-                disabled={creatingFollowUp}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={createFollowUp}
-                disabled={creatingFollowUp || !followUpTitle.trim()}
-              >
-                {creatingFollowUp ? "Creating…" : "Create & Run"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
