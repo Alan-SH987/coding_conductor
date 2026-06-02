@@ -532,8 +532,22 @@ async def revise_task(task_id: int, orch: Orchestrator = Depends(get_orchestrato
 
 @router.post("/tasks/{task_id}/approve")
 def approve_task(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
-    if orch.get_task(task_id) is None:
+    task = orch.get_task(task_id)
+    if task is None:
         raise HTTPException(404, f"task {task_id} not found")
+    # Idempotent: if already merged, return success without re-merging
+    if task.status == "merged":
+        return {
+            "ok": True,
+            "merged_sha": None,
+            "conflict": False,
+            "conflicted_files": [],
+            "verify_failed": False,
+            "verify_output": "",
+            "dirty": False,
+            "dirty_files": [],
+            "task": task,
+        }
     res = orch.approve_task(task_id)
     return {
         "ok": res.ok,
