@@ -15,6 +15,22 @@ for p in "$BACKEND_PORT" "$FRONTEND_PORT"; do
   fi
 done
 
+# Keep deps in lockstep before starting. A merged Conductor task can add a dep to
+# pyproject.toml / package.json without reinstalling it, so the venv / node_modules
+# drift and the server then crashes at import. Re-sync here (fast no-op when already
+# satisfied). Backend installs only the *declared* deps — no editable project install,
+# so nothing writes an egg-info that would dirty main.
+echo "syncing deps…"
+(
+  cd "$ROOT/backend"
+  ./.venv/bin/python - <<'PY'
+import pathlib, subprocess, sys, tomllib
+deps = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["dependencies"]
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", *deps])
+PY
+)
+( cd "$ROOT/frontend" && npm install --no-audit --no-fund )
+
 pids=()
 cleanup() {
   trap - INT TERM EXIT
