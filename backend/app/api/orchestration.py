@@ -275,16 +275,16 @@ async def distill_insights(project_id: int, orch: Orchestrator = Depends(get_orc
     """Distill this project's accumulated handoffs into high-level insights.
 
     Manually triggered (it runs an LLM, so it's off the task hot path). Writes
-    insights.md alongside — never touching the human-curated global.md — and
-    returns the distilled text ("" if there are no handoffs yet).
+    insights.md alongside — never touching the human-curated global.md. The LLM
+    call runs in the background so this request returns immediately.
     """
     if orch.get_project(project_id) is None:
         raise HTTPException(404, f"project {project_id} not found")
     try:
-        insights = await orch.distill_insights(project_id)
+        result = orch.start_distill_insights(project_id)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(409, str(exc))
-    return {"insights": insights}
+    return result
 
 
 @router.get("/projects/{project_id}/usage")

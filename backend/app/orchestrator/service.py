@@ -105,6 +105,9 @@ class Orchestrator:
         # Task queue and concurrency control
         self.queue_manager = TaskQueueManager(self.engine)
         self.concurrency_limiter = ConcurrencyLimiter(self.engine)
+        # project_id -> in-flight distillation task. Distillation is manual and
+        # LLM-backed, so API calls should trigger it off the request path.
+        self._distilling: dict[int, asyncio.Task] = {}
         # Wire up the queue to start tasks through this orchestrator
         self.queue_manager.set_start_callback(self._start_from_queue)
 
@@ -797,6 +800,32 @@ class Orchestrator:
             logger.exception("record_handoff(%s) failed", task.id)
 
     # ---------- distillation (manual, LLM-backed) ----------
+    def start_distill_insights(self, project_id: int) -> dict[str, str | bool]:
+        """Start memory distillation in the background and return immediately."""
+        project = self.get_project(project_id)
+        if project is None:
+            raise ValueError(f"project {project_id} not found")
+        if not memory.read_handoffs(project.path):
+            return {"status": "idle", "running": False, "insights": ""}
+
+        current = self._distilling.get(project_id)
+        if current is not None and not current.done():
+            return {"status": "distilling", "running": True}
+
+        task = asyncio.create_task(self._distill_insights_job(project_id))
+        self._distilling[project_id] = task
+        return {"status": "distilling", "running": True}
+
+    async def _distill_insights_job(self, project_id: int) -> None:
+        try:
+            await self.distill_insights(project_id)
+        except Exception:  # noqa: BLE001 - background memory updates are best-effort
+            logger.exception("distill_insights(%s) failed", project_id)
+        finally:
+            current = self._distilling.get(project_id)
+            if current is asyncio.current_task():
+                self._distilling.pop(project_id, None)
+
     async def distill_insights(self, project_id: int) -> str:
         """Summarize accumulated handoffs into a few durable, high-level insights
         and write them to insights.md (separate from the human-curated global.md).

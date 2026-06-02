@@ -735,3 +735,54 @@ def test_distill_no_handoffs_is_noop(repo, tmp_path):
 
     assert asyncio.run(orch.distill_insights(proj.id)) == ""
     assert not (memory.memory_dir(proj.path) / "insights.md").exists()
+
+
+def test_handoff_cache_invalidates_after_record(repo):
+    from app import memory
+
+    memory.ensure_conductor(repo)
+    memory.record_handoff(repo, "### task 1: auth flow\n- tags: #auth")
+    first = memory.build_context_bundle(repo, query="auth", query_tags=["#auth"])
+    assert "task 1" in first
+
+    memory.record_handoff(repo, "### task 2: billing api\n- tags: #api")
+    second = memory.build_context_bundle(repo, query="billing", query_tags=["#api"])
+    assert "task 2" in second
+
+
+def test_start_distill_insights_runs_in_background(repo, tmp_path):
+    import asyncio
+
+    from sqlmodel import SQLModel, create_engine
+
+    from app import memory
+
+    class SlowSummarizeAdapter(FakeAdapter):
+        async def run(self, spec, ctx):
+            await asyncio.sleep(0.01)
+            yield AgentEvent(
+                EventType.final,
+                text="- keep memory distillation off the request path",
+            )
+
+    async def scenario():
+        db = tmp_path / "distill_background.db"
+        eng = create_engine(f"sqlite:///{db}", connect_args={"check_same_thread": False})
+        SQLModel.metadata.create_all(eng)
+        orch = Orchestrator({"claude": SlowSummarizeAdapter()}, engine=eng)
+        proj = orch.create_project("p", str(repo))
+        memory.record_handoff(proj.path, "### task 1: async distill\n- tags: #perf")
+
+        result = orch.start_distill_insights(proj.id)
+        assert result == {"status": "distilling", "running": True}
+        assert orch.start_distill_insights(proj.id) == {"status": "distilling", "running": True}
+
+        for _ in range(20):
+            insights = memory.memory_dir(proj.path) / "insights.md"
+            if insights.exists():
+                break
+            await asyncio.sleep(0.01)
+
+        assert "off the request path" in insights.read_text()
+
+    asyncio.run(scenario())

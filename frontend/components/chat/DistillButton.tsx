@@ -9,7 +9,7 @@ import { api } from "@/lib/api";
 export function DistillButton({ projectId }: { projectId: number }) {
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
-  const [insights, setInsights] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function distill() {
@@ -17,7 +17,15 @@ export function DistillButton({ projectId }: { projectId: number }) {
     setError(null);
     try {
       const res = await api.distillProject(projectId);
-      setInsights(res.insights || "");
+      if (res.insights === "") {
+        setMessage("No handoffs to distill yet — merge or reject a task first.");
+      } else if (res.running) {
+        setMessage(
+          "Memory distillation is running in the background. New insights will appear in future task context when it finishes.",
+        );
+      } else {
+        setMessage("Memory distillation finished.");
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -51,10 +59,8 @@ export function DistillButton({ projectId }: { projectId: number }) {
           </div>
           {error ? (
             <p className="text-red-400">{error}</p>
-          ) : insights ? (
-            <pre className="max-h-60 overflow-auto whitespace-pre-wrap text-[11px] text-foreground">
-              {insights}
-            </pre>
+          ) : message ? (
+            <p className="text-muted-foreground">{message}</p>
           ) : (
             <p className="text-muted-foreground">
               No handoffs to distill yet — merge or reject a task first.
