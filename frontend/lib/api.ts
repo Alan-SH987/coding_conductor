@@ -216,6 +216,7 @@ export const api = {
   reviseTask: (id: number) => post<Task>(`/tasks/${id}/revise`),
   approve: (id: number) => post<ApproveResult>(`/tasks/${id}/approve`),
   reject: (id: number) => post<Task>(`/tasks/${id}/reject`),
+  stopTask: (id: number) => post<Task>(`/tasks/${id}/stop`),
 
   listRuns: (taskId: number) => http<Run[]>(`/tasks/${taskId}/runs`),
   listEvents: (runId: number) => http<Event[]>(`/runs/${runId}/events`),

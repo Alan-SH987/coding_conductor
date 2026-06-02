@@ -178,6 +178,23 @@ class Orchestrator:
         t = self._running.get(task_id)
         return t is not None and not t.done()
 
+    def stop_task(self, task_id: int) -> models.Task:
+        """Cancel a running task.
+
+        Cancels the in-flight asyncio Task and marks the task as failed with a
+        clear message. The worktree is left intact so a retry can resume.
+        """
+        loop_task = self._running.get(task_id)
+        if loop_task is None or loop_task.done():
+            raise ValueError(f"task {task_id} is not running")
+        loop_task.cancel()
+        self._running.pop(task_id, None)
+        return self._update_task(
+            task_id,
+            status=TaskStatus.failed.value,
+            error="stopped by user — click Retry to run again",
+        )
+
     def _has_children(self, task_id: int) -> bool:
         with Session(self.engine) as s:
             return s.exec(

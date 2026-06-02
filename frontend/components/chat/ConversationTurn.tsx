@@ -87,6 +87,13 @@ function PanelChip({
 // prompt) and a left-aligned "assistant" block (status + inline actions). When
 // streaming, key progress info shows inline so users can see what's happening
 // without opening the right panel.
+// Persisted progress info for completed/running tasks
+interface TaskProgressInfo {
+  toolCalls: number;
+  lastTool: string | null;
+  summary: string | null;
+}
+
 export function ConversationTurn({
   task,
   hasChildren,
@@ -94,11 +101,13 @@ export function ConversationTurn({
   liveEvents,
   busy,
   activeKind,
+  persistedProgress,
   onRun,
   onReview,
   onApprove,
   onReject,
   onOpenPanel,
+  onStop,
 }: {
   task: Task;
   hasChildren: boolean;
@@ -106,11 +115,13 @@ export function ConversationTurn({
   liveEvents: ApiEvent[];
   busy: boolean;
   activeKind: PanelKind | null;
+  persistedProgress?: TaskProgressInfo;
   onRun: (id: number) => void;
   onReview: (id: number) => void;
   onApprove: (id: number) => void;
   onReject: (id: number) => void;
   onOpenPanel: (kind: PanelKind, taskId: number) => void;
+  onStop?: (id: number) => void;
 }) {
   const progress = streaming ? extractProgress(liveEvents) : null;
   const canRun =
@@ -191,10 +202,40 @@ export function ConversationTurn({
                   [{progress.lastTool}]
                 </span>
               )}
+              {onStop && (
+                <button
+                  type="button"
+                  onClick={() => onStop(task.id)}
+                  className="ml-auto rounded-md border border-red-800/60 bg-red-950/40 px-2 py-0.5 text-red-300 hover:border-red-700 hover:bg-red-900/40"
+                >
+                  Stop
+                </button>
+              )}
             </div>
             {progress.currentAction && (
               <div className="mt-1.5 truncate text-zinc-300">
                 {progress.currentAction}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Persisted progress info (shown after stream ends) */}
+        {!streaming && persistedProgress && persistedProgress.toolCalls > 0 && (
+          <div className="rounded-md border border-zinc-700/40 bg-zinc-800/30 px-2.5 py-2 text-xs">
+            <div className="flex items-center gap-2 text-zinc-400">
+              <span>{persistedProgress.toolCalls} tool calls</span>
+              {persistedProgress.lastTool && (
+                <span className="font-mono text-zinc-500">
+                  [{persistedProgress.lastTool}]
+                </span>
+              )}
+            </div>
+            {persistedProgress.summary && (
+              <div className="mt-1.5 whitespace-pre-wrap text-zinc-300">
+                {persistedProgress.summary.length > 500
+                  ? persistedProgress.summary.slice(0, 500) + "..."
+                  : persistedProgress.summary}
               </div>
             )}
           </div>

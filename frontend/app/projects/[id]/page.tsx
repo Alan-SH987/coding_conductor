@@ -38,6 +38,10 @@ export default function ProjectPage({
   const [busyTaskId, setBusyTaskId] = useState<number | null>(null);
   const [streamingTaskId, setStreamingTaskId] = useState<number | null>(null);
   const [liveEvents, setLiveEvents] = useState<ApiEvent[]>([]);
+  // Persist key progress info per task (survives stream end)
+  const [taskProgress, setTaskProgress] = useState<
+    Record<number, { toolCalls: number; lastTool: string | null; summary: string | null }>
+  >({});
   // Tag filtering state
   const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
   // Which verbose view (if any) is open in the right-side drawer.
@@ -100,6 +104,41 @@ export default function ProjectPage({
       setLiveEvents((prev) =>
         prev.some((p) => p.id === ev.id) ? prev : [...prev, ev],
       );
+      // Update persisted progress for this task
+      if (ev.type === "tool_use") {
+        try {
+          const p = JSON.parse(ev.payload_json);
+          const tool = p.tool || p.name || null;
+          setTaskProgress((prev) => ({
+            ...prev,
+            [taskId]: {
+              ...prev[taskId],
+              toolCalls: (prev[taskId]?.toolCalls || 0) + 1,
+              lastTool: tool,
+            },
+          }));
+        } catch {
+          // ignore parse errors
+        }
+      } else if (ev.type === "final" || ev.type === "message") {
+        try {
+          const p = JSON.parse(ev.payload_json);
+          if (p.text && ev.type === "final") {
+            // Capture final summary
+            setTaskProgress((prev) => ({
+              ...prev,
+              [taskId]: {
+                ...prev[taskId],
+                toolCalls: prev[taskId]?.toolCalls || 0,
+                lastTool: prev[taskId]?.lastTool || null,
+                summary: p.text,
+              },
+            }));
+          }
+        } catch {
+          // ignore parse errors
+        }
+      }
     });
 
     es.addEventListener("done", async () => {
@@ -254,6 +293,23 @@ export default function ProjectPage({
       setError(String(e));
     } finally {
       setBusyTaskId(null);
+    }
+  }
+
+  async function onStop(id: number) {
+    setError(null);
+    try {
+      await api.stopTask(id);
+      // Close the event source if it's for this task
+      if (esRef.current && streamingTaskId === id) {
+        esRef.current.close();
+        esRef.current = null;
+      }
+      setStreamingTaskId(null);
+      setLiveEvents([]);
+      await load();
+    } catch (e) {
+      setError(String(e));
     }
   }
 
@@ -441,11 +497,13 @@ export default function ProjectPage({
                   liveEvents={streamingTaskId === t.id ? liveEvents : []}
                   busy={busyTaskId === t.id}
                   activeKind={panel?.taskId === t.id ? panel.kind : null}
+                  persistedProgress={taskProgress[t.id]}
                   onRun={onRun}
                   onReview={onReview}
                   onApprove={onApprove}
                   onReject={onReject}
                   onOpenPanel={openPanel}
+                  onStop={onStop}
                 />
               ))
             )}
