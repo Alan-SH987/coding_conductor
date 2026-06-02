@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api, type Project } from "@/lib/api";
 import { Button } from "@/components/ui";
+import { DirectoryPicker } from "@/components/DirectoryPicker";
 
 export function ProjectSidebar({
   projects,
@@ -21,6 +22,7 @@ export function ProjectSidebar({
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
 
   async function onCreate() {
     const n = name.trim();
@@ -86,16 +88,26 @@ export function ProjectSidebar({
             autoFocus
             className="w-full rounded-md border border-border bg-card px-2 py-1 text-sm outline-none focus:border-ring"
           />
-          <input
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") onCreate();
-              if (e.key === "Escape") setAdding(false);
-            }}
-            placeholder="/absolute/path"
-            className="w-full rounded-md border border-border bg-card px-2 py-1 font-mono text-[11px] outline-none focus:border-ring"
-          />
+          <div className="flex items-center gap-1">
+            <input
+              value={path}
+              onChange={(e) => setPath(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") onCreate();
+                if (e.key === "Escape") setAdding(false);
+              }}
+              placeholder="/absolute/path"
+              className="flex-1 rounded-md border border-border bg-card px-2 py-1 font-mono text-[11px] outline-none focus:border-ring"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPicker(true)}
+              title="Browse directories"
+              className="rounded border border-border px-1.5 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              …
+            </button>
+          </div>
           {error && <p className="text-[10px] text-red-400">{error}</p>}
           <div className="flex items-center gap-1.5">
             <Button
@@ -159,6 +171,21 @@ export function ProjectSidebar({
           })
         )}
       </nav>
+
+      {showPicker && (
+        <DirectoryPicker
+          onSelect={(selectedPath) => {
+            setPath(selectedPath);
+            setShowPicker(false);
+            // Auto-fill name from directory name if empty
+            if (!name.trim()) {
+              const dirName = selectedPath.split("/").pop() || "";
+              setName(dirName);
+            }
+          }}
+          onCancel={() => setShowPicker(false)}
+        />
+      )}
     </aside>
   );
 }

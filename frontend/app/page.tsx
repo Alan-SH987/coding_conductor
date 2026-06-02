@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { api, type Project } from "@/lib/api";
 import { Button, Card, Input } from "@/components/ui";
+import { DirectoryPicker } from "@/components/DirectoryPicker";
 
 export default function HomePage() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -12,6 +13,7 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -180,12 +182,23 @@ export default function HomePage() {
               onChange={(e) => setName(e.target.value)}
               required
             />
-            <Input
-              placeholder="absolute path to a git repo"
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              required
-            />
+            <div className="flex items-center gap-2">
+              <Input
+                placeholder="absolute path to a git repo"
+                value={path}
+                onChange={(e) => setPath(e.target.value)}
+                required
+                className="flex-1"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setShowPicker(true)}
+                title="Browse directories"
+              >
+                Browse
+              </Button>
+            </div>
             <Button type="submit" disabled={busy || !name || !path}>
               {busy ? "Creating…" : "Create project"}
             </Button>
@@ -195,6 +208,21 @@ export default function HomePage() {
 
       {error && (
         <p className="text-sm text-red-400">{error}</p>
+      )}
+
+      {showPicker && (
+        <DirectoryPicker
+          onSelect={(selectedPath) => {
+            setPath(selectedPath);
+            setShowPicker(false);
+            // Auto-fill name from directory name if empty
+            if (!name.trim()) {
+              const dirName = selectedPath.split("/").pop() || "";
+              setName(dirName);
+            }
+          }}
+          onCancel={() => setShowPicker(false)}
+        />
       )}
     </div>
   );
