@@ -688,7 +688,7 @@ class Orchestrator:
         res = git.merge_to(self._handle_from_task(task), verify_cmd=project.verify_cmd)
         if res.ok:
             git.remove_worktree(self._handle_from_task(task))
-            self._update_task(task_id, status=TaskStatus.merged.value)
+            self._update_task(task_id, status=TaskStatus.merged.value, error=None)
         elif res.dirty or res.verify_failed:
             # Blocked, not failed: main has uncommitted changes, or the verify
             # gate rejected the build. Nothing landed on main; leave the task at
@@ -696,7 +696,14 @@ class Orchestrator:
             # human cleans up / fixes, rather than losing the gate state.
             pass
         else:
-            self._update_task(task_id, status=TaskStatus.failed.value)
+            # Merge conflict (or other merge failure) — record WHY so the failed
+            # task isn't a black box.
+            reason = (
+                "merge conflict in: " + ", ".join(res.conflicted_files)
+                if res.conflict
+                else (res.verify_output or "merge failed")
+            )
+            self._set_failed(task_id, reason)
         return res
 
     def reject_task(self, task_id: int) -> models.Task:

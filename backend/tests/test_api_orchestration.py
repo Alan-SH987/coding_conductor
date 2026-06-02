@@ -467,3 +467,40 @@ def test_run_records_failure_reason(repo, tmp_path):
     t = orch.get_task(task.id)
     assert t.status == "failed"
     assert "boom" in (t.error or "")
+
+
+def test_approve_conflict_records_reason(repo, tmp_path):
+    """A merge conflict at approve marks the task failed WITH the reason."""
+    import asyncio
+    import subprocess
+    from pathlib import Path
+
+    from sqlmodel import SQLModel, create_engine
+
+    class EditAdapter(FakeAdapter):
+        async def run(self, spec, ctx):
+            yield AgentEvent(EventType.meta, data={"session_id": "x"})
+            (Path(ctx.worktree_path) / "README.md").write_text("agent version\n")
+            yield AgentEvent(EventType.final, text="done", data={"session_id": "x"})
+
+    db = tmp_path / "conflict.db"
+    eng = create_engine(f"sqlite:///{db}", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(eng)
+    orch = Orchestrator({"claude": EditAdapter()}, engine=eng)
+    proj = orch.create_project("p", str(repo))
+    task = orch.create_task(proj.id, "edit readme")
+    asyncio.run(orch.run_task(task.id))
+
+    # a conflicting edit lands on main before approval
+    (repo / "README.md").write_text("main version\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "main edit"],
+        cwd=repo, check=True, capture_output=True,
+    )
+
+    res = orch.approve_task(task.id)
+    assert res.ok is False and res.conflict is True
+    t = orch.get_task(task.id)
+    assert t.status == "failed"
+    assert "merge conflict" in (t.error or "")
