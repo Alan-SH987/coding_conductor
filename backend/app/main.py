@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -15,6 +16,31 @@ from app.gitops.errors import (
     WorktreeExistsError,
 )
 from app.storage.db import init_db
+
+
+def _scrub_agent_harness_env() -> None:
+    """Strip env vars that leak in when this backend is itself launched from a
+    Claude Code / agent session (e.g. a dev agent's shell).
+
+    They make the `claude` / `codex` CLI we spawn per task believe it is nested
+    inside another agent (CLAUDECODE=1, CLAUDE_CODE_SESSION_ID=...), or override
+    its subscription auth with an empty ANTHROPIC_API_KEY (api_key_source becomes
+    "none"). Removing them lets each spawned CLI run as a clean top-level process
+    on the logged-in subscription — so Conductor works no matter where it runs.
+    """
+    for key in list(os.environ):
+        if (
+            key in ("CLAUDECODE", "CLAUDE_EFFORT")
+            or key.startswith("CLAUDE_CODE")
+            or key.startswith("CLAUDE_AGENT")
+        ):
+            os.environ.pop(key, None)
+    if not (os.environ.get("ANTHROPIC_API_KEY") or "").strip():
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+
+
+# Run at import — before the app spawns any agent CLI subprocess.
+_scrub_agent_harness_env()
 
 
 @asynccontextmanager

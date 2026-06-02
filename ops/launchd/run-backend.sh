@@ -4,4 +4,5 @@
 # PATH (homebrew / nvm / ~/.local/bin) is present — the backend shells out to
 # git / claude / codex and needs them findable.
 cd "$(dirname "$0")/../../backend" || exit 1
-exec ./.venv/bin/python -m uvicorn app.main:app --reload --port 8010
+# No --reload: a file-watch restart would kill an in-flight agent task run.
+exec ./.venv/bin/python -m uvicorn app.main:app --port 8010

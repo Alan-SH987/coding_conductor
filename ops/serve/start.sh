@@ -19,8 +19,11 @@ DETACH='use POSIX; setsid(); exec @ARGV or die $!'
 mkdir -p "$LOGDIR"
 : > "$PIDFILE"
 
+# No --reload: uvicorn's file-watch restart would kill an in-flight agent run
+# (the task fails mid-stream). Restart by hand after backend code changes:
+#   ./ops/serve/stop.sh && ./ops/serve/start.sh
 perl -e "$DETACH" "$SUP" backend "$REPO/backend" "$LOGDIR/backend.log" \
-  ./.venv/bin/python -m uvicorn app.main:app --reload --port 8010 >/dev/null 2>&1 &
+  ./.venv/bin/python -m uvicorn app.main:app --port 8010 >/dev/null 2>&1 &
 echo "backend $!" >> "$PIDFILE"
 echo "started backend  (pgid $!) -> $LOGDIR/backend.log"
 
