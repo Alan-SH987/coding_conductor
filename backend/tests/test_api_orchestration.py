@@ -55,6 +55,7 @@ class FakeAdapter(AgentAdapter):
 
     def __init__(self):
         self.seen_system_prompts: list[str] = []  # one per run(), for assertions
+        self.seen_goals: list[str] = []
 
     async def plan(self, goal, repo_path, capabilities) -> list[SubtaskSpec]:
         return [
@@ -72,6 +73,7 @@ class FakeAdapter(AgentAdapter):
 
     async def run(self, spec: TaskSpec, ctx: RunContext) -> AsyncIterator[AgentEvent]:
         self.seen_system_prompts.append(ctx.system_prompt)
+        self.seen_goals.append(spec.goal)
         yield AgentEvent(EventType.meta, data={"session_id": "api-sess"})
         yield AgentEvent(EventType.message, text="working")
         (Path(ctx.worktree_path) / "hello.txt").write_text("hello from fake adapter\n")
@@ -561,6 +563,40 @@ def test_create_task_auto_agent_resolves(client, repo):
     r = client.post(f"/projects/{pid}/tasks", json={"title": "do a thing", "agent": "auto"})
     assert r.status_code == 201
     assert r.json()["assigned_agent"] != "auto"  # resolved to a registered adapter
+
+
+def test_upload_task_attachments_are_injected(overridden, client, repo):
+    _pid, tid = _make_project_and_task(client, repo)
+
+    r = client.post(
+        f"/tasks/{tid}/attachments",
+        files=[
+            ("files", ("shot.png", b"\x89PNG\r\n", "image/png")),
+            ("files", ("../../notes.txt", b"look here", "text/plain")),
+        ],
+    )
+    assert r.status_code == 200
+    uploaded = r.json()
+    assert [item["filename"] for item in uploaded] == ["shot.png", "notes.txt"]
+    assert (repo / ".conductor" / "attachments" / f"task-{tid}" / "shot.png").exists()
+    assert (repo / ".conductor" / "attachments" / f"task-{tid}" / "notes.txt").exists()
+
+    async def flow():
+        async with _asgi_client() as ac:
+            run = await ac.post(f"/tasks/{tid}/run")
+            assert run.status_code == 202
+            await _drain_stream(ac, tid)
+
+    asyncio.run(asyncio.wait_for(flow(), timeout=15))
+
+    goal = overridden.adapters["claude"].seen_goals[-1]
+    assert "Attachments supplied by the user:" in goal
+    assert "shot.png" in goal
+    assert "notes.txt" in goal
+    diff = client.get(f"/tasks/{tid}/diff").json()["diff"]
+    assert "hello from fake adapter" in diff
+    assert "shot.png" not in diff
+    assert "notes.txt" not in diff
 
 
 def test_merge_records_handoff_memory(repo, tmp_path):

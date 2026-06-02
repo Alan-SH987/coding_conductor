@@ -27,6 +27,11 @@ export default function ProjectPage({
   params: { id: string };
 }) {
   const projectId = Number(params.id);
+  type PendingAttachment = {
+    id: string;
+    file: File;
+    previewUrl: string | null;
+  };
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState<Project | null>(null);
@@ -35,6 +40,7 @@ export default function ProjectPage({
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agent, setAgent] = useState("auto");
   const [message, setMessage] = useState("");
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [busyTaskId, setBusyTaskId] = useState<number | null>(null);
@@ -64,6 +70,8 @@ export default function ProjectPage({
 
   const esRef = useRef<EventSource | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const attachmentsRef = useRef<PendingAttachment[]>([]);
   const isInitialLoad = useRef(true);
 
   async function load(): Promise<Task[]> {
@@ -214,14 +222,72 @@ export default function ProjectPage({
     }
   }, [tasks.length, liveEvents.length]);
 
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+
+  useEffect(() => {
+    return () => {
+      for (const item of attachmentsRef.current) {
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      }
+    };
+  }, []);
+
+  function addAttachments(files: FileList | File[]) {
+    const nextFiles = Array.from(files);
+    if (nextFiles.length === 0) return;
+    setAttachments((prev) => [
+      ...prev,
+      ...nextFiles.map((file) => ({
+        id: `${file.name}-${file.size}-${file.lastModified}-${crypto.randomUUID()}`,
+        file,
+        previewUrl: file.type.startsWith("image/")
+          ? URL.createObjectURL(file)
+          : null,
+      })),
+    ]);
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((prev) => {
+      const item = prev.find((a) => a.id === id);
+      if (item?.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      return prev.filter((a) => a.id !== id);
+    });
+  }
+
+  function clearAttachments() {
+    for (const item of attachments) {
+      if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    }
+    setAttachments([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function formatFileSize(size: number) {
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
   async function onSend() {
-    const title = message.trim();
-    if (!title || sending) return;
+    const trimmedMessage = message.trim();
+    const title =
+      trimmedMessage ||
+      (attachments.length === 1
+        ? `Attached file: ${attachments[0].file.name}`
+        : `Attached ${attachments.length} files`);
+    if ((!trimmedMessage && attachments.length === 0) || sending) return;
     setError(null);
     setSending(true);
     try {
       const task = await api.createTask(projectId, title, "", agent);
+      if (attachments.length > 0) {
+        await api.uploadTaskAttachments(task.id, attachments.map((a) => a.file));
+      }
       setMessage("");
+      clearAttachments();
       await load();
       await api.runTask(task.id);
       openStream(task.id);
@@ -689,19 +755,83 @@ export default function ProjectPage({
           )}
 
           <div className="mt-2 flex items-end gap-2">
-            <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  onSend();
-                }
+            <div className="flex flex-1 flex-col gap-2">
+              {attachments.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {attachments.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex max-w-56 items-center gap-2 rounded-md border border-border bg-card px-2 py-1"
+                    >
+                      {item.previewUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={item.previewUrl}
+                          alt=""
+                          className="h-9 w-9 rounded object-cover"
+                        />
+                      ) : (
+                        <span className="flex h-9 w-9 items-center justify-center rounded bg-muted text-xs">
+                          file
+                        </span>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-xs text-foreground">
+                          {item.file.name}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">
+                          {formatFileSize(item.file.size)}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(item.id)}
+                        aria-label={`Remove ${item.file.name}`}
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        x
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                onPaste={(e) => {
+                  if (e.clipboardData.files.length > 0) {
+                    addAttachments(e.clipboardData.files);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    onSend();
+                  }
+                }}
+                rows={2}
+                placeholder="Describe a task…  (Enter to send, Shift+Enter for newline)"
+                className="resize-none rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-ring"
+              />
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files) addAttachments(e.target.files);
               }}
-              rows={2}
-              placeholder="Describe a task…  (Enter to send, Shift+Enter for newline)"
-              className="flex-1 resize-none rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-ring"
             />
+            <Button
+              variant="ghost"
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="px-3"
+              title="Attach files or screenshots"
+            >
+              Attach
+            </Button>
             <select
               value={agent}
               onChange={(e) => setAgent(e.target.value)}
@@ -713,7 +843,11 @@ export default function ProjectPage({
                 </option>
               ))}
             </select>
-            <Button onClick={onSend} disabled={sending || !message.trim()} className="px-4">
+            <Button
+              onClick={onSend}
+              disabled={sending || (!message.trim() && attachments.length === 0)}
+              className="px-4"
+            >
               {sending ? "Sending…" : "Send"}
             </Button>
           </div>

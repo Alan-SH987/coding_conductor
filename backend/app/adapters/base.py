@@ -70,6 +70,7 @@ class RunContext:
     permission_mode: str = "acceptEdits"
     timeout: int = 600
     resume_session_id: Optional[str] = None
+    attachment_paths: list[str] = field(default_factory=list)
 
 
 @dataclass
