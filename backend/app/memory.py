@@ -90,17 +90,50 @@ def _ensure_git_exclude(repo: Path) -> None:
 
 
 def build_context_bundle(repo_path: str | Path) -> str:
-    """Return shared memory to inject as system prompt, or '' if none."""
-    glob = memory_dir(repo_path) / "global.md"
-    if not glob.exists():
-        return ""
-    content = glob.read_text().strip()
-    if not content:
+    """Return shared memory to inject as system prompt, or '' if none.
+
+    Includes the human-curated global.md PLUS recent task handoffs accumulated by
+    record_handoff — bounded to the most recent slice so the prompt stays small.
+    This is the read side of the memory loop: each merged task's distilled entry
+    feeds the next run.
+    """
+    mem = memory_dir(repo_path)
+    parts: list[str] = []
+
+    glob = mem / "global.md"
+    if glob.exists():
+        content = glob.read_text().strip()
+        if content:
+            parts.append(content)
+
+    handoff = mem / "handoff.md"
+    if handoff.exists():
+        h = handoff.read_text().strip()
+        if h and "(none)" not in h:  # real entries exist (seed placeholder gone)
+            parts.append("## Recent task handoffs (most recent last)\n\n" + h[-3000:])
+
+    if not parts:
         return ""
     return (
         "You are working within Coding Conductor. The following is shared "
-        "project memory for this repository:\n\n" + content
+        "project memory for this repository:\n\n" + "\n\n".join(parts)
     )
+
+
+def record_handoff(repo_path: str | Path, entry: str) -> None:
+    """Append a distilled memory entry to handoff.md (read back into future runs).
+
+    Drops the seed '(none)' placeholder on the first real entry. Lives under
+    .conductor/ (git-excluded), so it never pollutes a captured diff.
+    """
+    if not entry or not entry.strip():
+        return
+    f = memory_dir(repo_path) / "handoff.md"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    existing = f.read_text() if f.exists() else "# Handoff\n"
+    if "(none)" in existing:
+        existing = "# Handoff\n"
+    f.write_text(existing.rstrip() + "\n\n" + entry.strip() + "\n")
 
 
 def save_diff(repo_path: str | Path, task_id: int | str, unified_diff: str) -> str:

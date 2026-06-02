@@ -546,3 +546,34 @@ def test_create_task_auto_agent_resolves(client, repo):
     r = client.post(f"/projects/{pid}/tasks", json={"title": "do a thing", "agent": "auto"})
     assert r.status_code == 201
     assert r.json()["assigned_agent"] != "auto"  # resolved to a registered adapter
+
+
+def test_merge_records_handoff_memory(repo, tmp_path):
+    """A merged task distills a handoff entry that later runs read back."""
+    import asyncio
+    from pathlib import Path
+
+    from sqlmodel import SQLModel, create_engine
+
+    from app import memory
+
+    class EditAdapter(FakeAdapter):
+        async def run(self, spec, ctx):
+            yield AgentEvent(EventType.meta, data={"session_id": "x"})
+            (Path(ctx.worktree_path) / "feature.txt").write_text("hello\n")
+            yield AgentEvent(EventType.final, text="done", data={"session_id": "x"})
+
+    db = tmp_path / "handoff.db"
+    eng = create_engine(f"sqlite:///{db}", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(eng)
+    orch = Orchestrator({"claude": EditAdapter()}, engine=eng)
+    proj = orch.create_project("p", str(repo))
+    task = orch.create_task(proj.id, "add a feature")
+    asyncio.run(orch.run_task(task.id))
+
+    assert orch.approve_task(task.id).ok is True
+
+    # the merged task's distilled entry is now readable by future runs
+    bundle = memory.build_context_bundle(proj.path)
+    assert "add a feature" in bundle
+    assert "feature.txt" in bundle

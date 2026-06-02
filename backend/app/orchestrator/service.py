@@ -441,6 +441,37 @@ class Orchestrator:
             return memory.read_diff(run.diff_ref)
         return ""
 
+    def _changed_files(self, task_id: int) -> list[str]:
+        """File paths from a task's captured diff ('diff --git a/x b/x' -> x)."""
+        files: list[str] = []
+        for line in self.get_diff(task_id).splitlines():
+            if line.startswith("diff --git "):
+                head, sep, tail = line.partition(" b/")
+                if sep:
+                    files.append(tail.strip())
+        return files
+
+    def _record_handoff(self, task, project) -> None:
+        """Distill a merged task into a shared-memory handoff entry (best-effort).
+
+        The write side of the memory loop: cheap/deterministic (no extra LLM
+        call) — title + changed files + the existing AI review, if any.
+        """
+        try:
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            lines = [f"### task {task.id}: {task.title} ({today})"]
+            files = self._changed_files(task.id)
+            if files:
+                shown = ", ".join(files[:10]) + (" …" if len(files) > 10 else "")
+                lines.append(f"- files: {shown}")
+            review = self.get_latest_review(task.id)
+            if review:
+                summary = " ".join((review.summary or "").split())[:200]
+                lines.append(f"- review: {review.verdict}" + (f" — {summary}" if summary else ""))
+            memory.record_handoff(project.path, "\n".join(lines))
+        except Exception:  # noqa: BLE001 - memory is best-effort, never block a merge
+            logger.exception("record_handoff(%s) failed", task.id)
+
     # ---------- review (advisory) ----------
     async def review_task(self, task_id: int) -> models.Review:
         """Run an advisory AI review over the task's latest captured diff.
@@ -713,6 +744,7 @@ class Orchestrator:
         if res.ok:
             git.remove_worktree(self._handle_from_task(task))
             self._update_task(task_id, status=TaskStatus.merged.value, error=None)
+            self._record_handoff(task, project)
         elif res.dirty or res.verify_failed:
             # Blocked, not failed: main has uncommitted changes, or the verify
             # gate rejected the build. Nothing landed on main; leave the task at
