@@ -192,6 +192,8 @@ export const api = {
   listSkills: () => http<Skill[]>("/skills"),
   updateProjectSkills: (id: number, enabled: string[]) =>
     patch<Project>(`/projects/${id}/skills`, { enabled }),
+  distillProject: (id: number) =>
+    post<{ insights: string }>(`/projects/${id}/distill`),
 
   listTasks: (projectId: number) =>
     http<Task[]>(`/projects/${projectId}/tasks`),
