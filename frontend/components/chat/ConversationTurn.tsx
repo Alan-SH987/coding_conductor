@@ -103,6 +103,15 @@ export function ConversationTurn({
           </Link>
         </div>
 
+        {task.status === "failed" && task.error && (
+          <div className="rounded-md border border-red-900/60 bg-red-950/30 px-2.5 py-1.5 text-xs">
+            <span className="font-medium text-red-300">Failed:</span>{" "}
+            <span className="whitespace-pre-wrap break-words text-red-200/90">
+              {task.error}
+            </span>
+          </div>
+        )}
+
         {(canRun || atGate) && (
           <div className="flex flex-wrap gap-2">
             {canRun && (

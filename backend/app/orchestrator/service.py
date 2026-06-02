@@ -265,12 +265,12 @@ class Orchestrator:
         # Check quota before starting the run
         try:
             self.check_quota(project_id)
-        except QuotaExceeded:
-            self._set_status(task_id, TaskStatus.failed)
+        except QuotaExceeded as exc:
+            self._set_failed(task_id, f"quota exceeded: {exc}")
             raise
 
         if agent_name not in self.adapters:
-            self._set_status(task_id, TaskStatus.failed)
+            self._set_failed(task_id, f"no adapter named {agent_name!r}")
             raise ValueError(f"no adapter named {agent_name!r}")
 
         git = GitOpsEngine(project_path)
@@ -280,12 +280,12 @@ class Orchestrator:
         git.reset_worktree(task_id)
         try:
             handle = git.create_worktree(task_id)
-        except Exception:
-            self._set_status(task_id, TaskStatus.failed)
+        except Exception as exc:
+            self._set_failed(task_id, f"worktree setup failed: {exc}")
             raise
 
-        self._update_task(task_id, branch=handle.branch,
-                          worktree_path=handle.path, status=TaskStatus.running.value)
+        self._update_task(task_id, branch=handle.branch, worktree_path=handle.path,
+                          status=TaskStatus.running.value, error=None)
 
         run_id = self._create_run(task_id, agent_name)
         spec = TaskSpec(goal=spec_goal)
@@ -352,6 +352,7 @@ class Orchestrator:
         seq = 0
         session_id: Optional[str] = None
         had_error = False
+        error_text = ""
         agg = {"cost": 0.0, "in": 0, "out": 0, "dur": 0}
         try:
             async for ev in adapter.run(spec, ctx):
@@ -368,9 +369,10 @@ class Orchestrator:
                     agg["dur"] += ev.data.get("duration_ms") or 0
                 elif ev.type == EventType.error:
                     had_error = True
-        except Exception:
+                    error_text = ev.text or error_text
+        except Exception as exc:
             self._finish_run(run_id, RunStatus.failed, session_id, agg, diff_ref=None)
-            self._set_status(task_id, TaskStatus.failed)
+            self._set_failed(task_id, f"run error: {exc}")
             raise
 
         diff = git.snapshot_and_diff(handle)
@@ -387,7 +389,11 @@ class Orchestrator:
         })
 
         final_status = TaskStatus.failed if had_error else TaskStatus.awaiting_approval
-        return self._update_task(task_id, status=final_status.value)
+        return self._update_task(
+            task_id,
+            status=final_status.value,
+            error=(error_text.strip()[:2000] or "the agent reported an error") if had_error else None,
+        )
 
     @staticmethod
     def _compose_revision_prompt(summary: str, findings: list[dict]) -> str:
@@ -727,6 +733,41 @@ class Orchestrator:
 
     def _set_status(self, task_id: int, status: TaskStatus) -> None:
         self._update_task(task_id, status=status.value)
+
+    def _set_failed(self, task_id: int, reason: str) -> None:
+        """Mark a task failed AND record why, so the UI can show it."""
+        self._update_task(
+            task_id, status=TaskStatus.failed.value, error=(reason or "").strip()[:2000] or None
+        )
+
+    def reconcile_orphaned_runs(self) -> int:
+        """Reconcile tasks left 'running' by a server restart (called at startup).
+
+        The in-flight-run registry is in-memory, so after a restart any task still
+        marked ``running`` is orphaned — its run process is gone. Flip it to
+        ``failed`` with a clear, retryable reason instead of leaving it stuck.
+        """
+        with Session(self.engine) as s:
+            tasks = list(
+                s.exec(select(models.Task).where(
+                    models.Task.status == TaskStatus.running.value,
+                    models.Task.deleted_at.is_(None),
+                )).all()
+            )
+            for t in tasks:
+                t.status = TaskStatus.failed.value
+                t.error = ("interrupted: the server restarted while this task was "
+                           "running — click Retry to run it again")
+                t.updated_at = datetime.now(timezone.utc)
+                s.add(t)
+            for r in s.exec(select(models.Run).where(
+                models.Run.status == RunStatus.running.value
+            )).all():
+                r.status = RunStatus.failed.value
+                r.ended_at = datetime.now(timezone.utc)
+                s.add(r)
+            s.commit()
+            return len(tasks)
 
     def _create_run(self, task_id: int, agent: str) -> int:
         with Session(self.engine) as s:

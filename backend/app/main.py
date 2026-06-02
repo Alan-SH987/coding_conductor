@@ -1,3 +1,4 @@
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -46,6 +47,16 @@ _scrub_agent_harness_env()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    # A restart orphans any in-flight run; mark those tasks failed (retryable)
+    # instead of leaving them stuck "running" forever.
+    try:
+        from app.api.deps import get_orchestrator
+
+        n = get_orchestrator().reconcile_orphaned_runs()
+        if n:
+            logging.getLogger(__name__).info("reconciled %d orphaned task(s)", n)
+    except Exception:  # noqa: BLE001 - never block startup on reconcile
+        logging.getLogger(__name__).warning("orphan reconcile skipped", exc_info=True)
     yield
 
 

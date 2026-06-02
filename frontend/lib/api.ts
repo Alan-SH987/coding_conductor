@@ -39,6 +39,7 @@ export interface Task {
   assigned_agent: string | null;
   branch: string | null;
   worktree_path: string | null;
+  error: string | null;
   created_at: string;
   updated_at: string;
 }

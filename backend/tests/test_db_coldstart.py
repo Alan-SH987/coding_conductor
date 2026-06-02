@@ -63,8 +63,8 @@ def test_cold_start_fresh_db(tmp_path):
 
     cols = _columns(db, "project")
     assert {"is_pinned", "is_archived", "deleted_at", "quota_tokens", "quota_cost_usd", "verify_cmd"} <= cols
-    assert "deleted_at" in _columns(db, "task")
-    assert _alembic_version(db) == ["004"]
+    assert {"deleted_at", "error"} <= _columns(db, "task")
+    assert _alembic_version(db) == ["005"]
 
 
 def test_cold_start_old_schema_db(tmp_path):
@@ -90,7 +90,7 @@ def test_cold_start_old_schema_db(tmp_path):
 
     cols = _columns(db, "project")
     assert {"is_pinned", "is_archived", "deleted_at", "quota_tokens", "quota_cost_usd", "verify_cmd"} <= cols
-    assert _alembic_version(db) == ["004"]
+    assert _alembic_version(db) == ["005"]
 
     con = sqlite3.connect(db)
     try:

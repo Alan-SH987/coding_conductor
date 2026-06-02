@@ -418,3 +418,52 @@ def test_agents_health_status_derivation(tmp_path):
         assert by_name["down"]["status"] == "unavailable"
     finally:
         app.dependency_overrides.clear()
+
+
+def test_reconcile_orphaned_running_tasks(orch):
+    """A task left 'running' by a restart is reconciled to failed with a reason."""
+    from sqlmodel import Session
+
+    from app.storage import models
+
+    with Session(orch.engine) as s:
+        p = models.Project(name="p", path="/tmp/whatever", default_branch="main")
+        s.add(p)
+        s.commit()
+        s.refresh(p)
+        t = models.Task(project_id=p.id, title="stuck", status=models.TaskStatus.running.value)
+        s.add(t)
+        s.commit()
+        s.refresh(t)
+        tid = t.id
+
+    assert orch.reconcile_orphaned_runs() == 1
+    task = orch.get_task(tid)
+    assert task.status == "failed"
+    assert "interrupted" in (task.error or "")
+
+
+def test_run_records_failure_reason(repo, tmp_path):
+    """A run that errors records WHY on the task instead of failing silently."""
+    import asyncio
+
+    from sqlmodel import SQLModel, create_engine
+
+    class ErrAdapter(FakeAdapter):
+        async def run(self, spec, ctx):
+            yield AgentEvent(EventType.meta, data={"session_id": "x"})
+            yield AgentEvent(EventType.error, text="boom: the agent blew up",
+                             data={"kind": "runtime"})
+
+    db = tmp_path / "err.db"
+    eng = create_engine(f"sqlite:///{db}", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(eng)
+    orch = Orchestrator({"claude": ErrAdapter()}, engine=eng)
+    proj = orch.create_project("p", str(repo))
+    task = orch.create_task(proj.id, "do thing")
+
+    asyncio.run(orch.run_task(task.id))
+
+    t = orch.get_task(task.id)
+    assert t.status == "failed"
+    assert "boom" in (t.error or "")

@@ -55,6 +55,9 @@ class Task(SQLModel, table=True):
     assigned_agent: Optional[str] = None
     branch: Optional[str] = None
     worktree_path: Optional[str] = None
+    # Why the most recent run failed (cleared when a new run starts). Surfaced in
+    # the UI so a failed task is never a silent black box.
+    error: Optional[str] = None
     deleted_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
