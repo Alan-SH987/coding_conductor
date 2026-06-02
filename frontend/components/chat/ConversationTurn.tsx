@@ -152,6 +152,22 @@ export function ConversationTurn({
           <Badge status={task.status} />
           <span>{task.assigned_agent ?? "—"}</span>
           {task.branch && <span className="font-mono">{task.branch}</span>}
+          {/* Display task tags */}
+          {task.tags && (() => {
+            try {
+              const tags: string[] = JSON.parse(task.tags);
+              return tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="rounded-sm bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400"
+                >
+                  {tag}
+                </span>
+              ));
+            } catch {
+              return null;
+            }
+          })()}
           <Link
             href={`/tasks/${task.id}`}
             className="ml-auto text-zinc-500 hover:text-zinc-300"

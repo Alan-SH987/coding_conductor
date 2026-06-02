@@ -46,6 +46,7 @@ export interface Task {
   branch: string | null;
   worktree_path: string | null;
   error: string | null;
+  tags: string | null; // JSON array of tags, e.g. '["#auth", "#api"]'
   created_at: string;
   updated_at: string;
 }

@@ -103,17 +103,101 @@ def _terms(text: str) -> set[str]:
     return latin | bigrams
 
 
-def _retrieve_handoffs(handoff_md: str, query: str, k: int = 5) -> list[str]:
+# ---------- auto-tagging ----------
+# Domain/stack keywords to look for (extendable)
+_TAG_PATTERNS: dict[str, list[str]] = {
+    # Domains
+    "#auth": ["auth", "login", "logout", "session", "token", "jwt", "oauth", "password", "认证", "登录"],
+    "#api": ["api", "endpoint", "rest", "graphql", "route", "接口"],
+    "#ui": ["ui", "component", "button", "form", "modal", "dialog", "界面", "组件"],
+    "#db": ["database", "db", "sql", "query", "migration", "schema", "数据库"],
+    "#test": ["test", "spec", "mock", "fixture", "测试"],
+    "#doc": ["doc", "readme", "comment", "文档"],
+    "#perf": ["perf", "performance", "optimize", "cache", "性能", "优化"],
+    "#bug": ["bug", "fix", "error", "issue", "crash", "修复", "错误"],
+    "#refactor": ["refactor", "cleanup", "重构"],
+    "#feature": ["feature", "add", "new", "implement", "功能", "新增"],
+    # Tech stacks
+    "#python": ["python", "py", "pip", "django", "flask", "fastapi"],
+    "#typescript": ["typescript", "ts", "tsx"],
+    "#javascript": ["javascript", "js", "jsx", "node", "npm"],
+    "#react": ["react", "hook", "useState", "useEffect", "component"],
+    "#nextjs": ["nextjs", "next.js", "next"],
+    "#docker": ["docker", "container", "compose", "dockerfile"],
+    "#git": ["git", "commit", "branch", "merge", "rebase"],
+    "#ci": ["ci", "cd", "pipeline", "github actions", "workflow"],
+}
+
+
+def extract_tags(title: str, description: str = "", files: list[str] | None = None) -> list[str]:
+    """Extract relevant tags from task title, description, and changed files.
+
+    Returns a list of tags like ["#auth", "#python", "#api"]. The tags are
+    deterministic and based on keyword matching — no LLM involved.
+    """
+    text = f"{title} {description}".lower()
+
+    # Also extract from file extensions and paths
+    if files:
+        for f in files:
+            f_lower = f.lower()
+            text += f" {f_lower}"
+            # Add extension hints
+            if f_lower.endswith(".py"):
+                text += " python"
+            elif f_lower.endswith((".ts", ".tsx")):
+                text += " typescript"
+            elif f_lower.endswith((".js", ".jsx")):
+                text += " javascript"
+            elif f_lower.endswith(".sql"):
+                text += " sql database"
+
+    found: list[str] = []
+    for tag, keywords in _TAG_PATTERNS.items():
+        for kw in keywords:
+            if kw in text:
+                found.append(tag)
+                break  # one match per tag is enough
+
+    return sorted(set(found))
+
+
+def _retrieve_handoffs(
+    handoff_md: str, query: str, k: int = 5, query_tags: list[str] | None = None
+) -> list[str]:
     """Up to k handoff entries most relevant to ``query`` by keyword overlap,
-    falling back to the most recent when there's no query or no match."""
+    falling back to the most recent when there's no query or no match.
+
+    If ``query_tags`` are provided, entries with matching tags get a bonus
+    (tag matches are weighted 2x compared to keyword matches).
+    """
     body = handoff_md.split("\n", 1)[-1] if handoff_md.startswith("# Handoff") else handoff_md
     entries = [e.strip() for e in re.split(r"(?=^### )", body, flags=re.M) if e.strip()]
     if not entries:
         return []
+
     qterms = _terms(query)
-    if not qterms:
+    qtags = set(query_tags or [])
+
+    if not qterms and not qtags:
         return entries[-k:]
-    scored = [(len(qterms & _terms(e)), i, e) for i, e in enumerate(entries)]
+
+    def score_entry(entry: str) -> float:
+        """Score an entry: keyword overlap + tag bonus."""
+        entry_terms = _terms(entry)
+        keyword_score = len(qterms & entry_terms)
+
+        # Extract tags mentioned in the entry (e.g., from "- tags: #auth, #api")
+        tag_match = re.search(r"- tags:\s*(.+)", entry)
+        if tag_match and qtags:
+            entry_tags = set(re.findall(r"#\w+", tag_match.group(1)))
+            tag_score = len(qtags & entry_tags) * 2  # tags weighted 2x
+        else:
+            tag_score = 0
+
+        return keyword_score + tag_score
+
+    scored = [(score_entry(e), i, e) for i, e in enumerate(entries)]
     relevant = [
         e for (s, i, e) in sorted(scored, key=lambda x: (x[0], x[1]), reverse=True)
         if s > 0
@@ -121,12 +205,17 @@ def _retrieve_handoffs(handoff_md: str, query: str, k: int = 5) -> list[str]:
     return relevant or entries[-k:]
 
 
-def build_context_bundle(repo_path: str | Path, query: str = "") -> str:
+def build_context_bundle(
+    repo_path: str | Path, query: str = "", query_tags: list[str] | None = None
+) -> str:
     """Return shared memory to inject as system prompt, or '' if none.
 
     The human-curated global.md PLUS the task handoffs most relevant to ``query``
     (the current task) by keyword overlap — recency as a fallback. Read side of
     the memory loop; bounded so the prompt stays small.
+
+    If ``query_tags`` are provided (e.g., ["#auth", "#api"]), handoff entries
+    with matching tags will be weighted higher during retrieval.
     """
     mem = memory_dir(repo_path)
     parts: list[str] = []
@@ -147,7 +236,7 @@ def build_context_bundle(repo_path: str | Path, query: str = "") -> str:
     if handoff.exists():
         h = handoff.read_text().strip()
         if h and "(none)" not in h:  # real entries exist (seed placeholder gone)
-            entries = _retrieve_handoffs(h, query, k=5)
+            entries = _retrieve_handoffs(h, query, k=5, query_tags=query_tags)
             if entries:
                 parts.append("## Relevant task handoffs\n\n" + "\n\n".join(entries)[-3000:])
 
