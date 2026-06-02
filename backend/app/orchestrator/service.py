@@ -17,7 +17,7 @@ import asyncio
 import json
 import logging
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -28,7 +28,9 @@ from app import memory, skills
 from app.adapters.base import AgentAdapter, EventType, RunContext, TaskSpec
 from app.gitops import GitOpsEngine, NotAGitRepo
 from app.gitops.models import WorktreeHandle
+from app.orchestrator.error_classifier import classify_error
 from app.orchestrator.model_router import ModelRouter
+from app.orchestrator.retry_policy import RetryPolicy
 from app.orchestrator.routing import select_agent
 from app.orchestrator.smart_decomposer import (
     SmartDecomposer,
@@ -72,10 +74,26 @@ class ReviseError(Exception):
     """Raised when a task cannot be revised (not at the gate / no review)."""
 
 
+@dataclass
+class _DriveResult:
+    task: models.Task
+    success: bool
+    error_text: str = ""
+    error_kind: str = ""
+    session_id: Optional[str] = None
+    exception: Optional[Exception] = None
+
+
 class Orchestrator:
-    def __init__(self, adapters: dict[str, AgentAdapter], engine=None):
+    def __init__(
+        self,
+        adapters: dict[str, AgentAdapter],
+        engine=None,
+        retry_policy: Optional[RetryPolicy] = None,
+    ):
         self.adapters = adapters
         self.engine = engine or default_engine
+        self.retry_policy = retry_policy or RetryPolicy()
         # task_id -> in-flight asyncio Task. In-memory only; on restart the
         # registry is empty and a stuck "running" task can simply be re-run.
         self._running: dict[int, asyncio.Task] = {}
@@ -293,33 +311,75 @@ class Orchestrator:
             self._set_failed(task_id, f"no adapter named {agent_name!r}")
             raise ValueError(f"no adapter named {agent_name!r}")
 
+        adapter = self.adapters[agent_name]
         git = GitOpsEngine(project_path)
-        # A prior failed run leaves its worktree/branch behind (cleanup only
-        # happens on approve/reject), so clear any stale attempt before creating
-        # a fresh worktree off the default branch — otherwise a retry collides.
-        git.reset_worktree(task_id)
         try:
-            handle = git.create_worktree(task_id)
+            handle, resume_session_id = self._prepare_run_handle(task, git, adapter)
         except Exception as exc:
             self._set_failed(task_id, f"worktree setup failed: {exc}")
             raise
 
-        self._update_task(task_id, branch=handle.branch, worktree_path=handle.path,
-                          status=TaskStatus.running.value, error=None)
-
-        run_id = self._create_run(task_id, agent_name)
         spec = TaskSpec(goal=spec_goal)
         bundle_parts = [
             memory.build_context_bundle(project_path, query=spec_goal, query_tags=task_tags),
             skills.build_skills_bundle(skills.parse_enabled(enabled_skills)),
         ]
-        ctx = RunContext(
-            worktree_path=handle.path,
+        return await self._drive_run_with_retries(
+            task_id=task_id,
+            agent_name=agent_name,
+            project_path=project_path,
+            git=git,
+            handle=handle,
+            spec=spec,
             system_prompt="\n\n".join(p for p in bundle_parts if p),
+            resume_session_id=resume_session_id,
         )
-        return await self._drive_run(
-            task_id, run_id, agent_name, project_path, git, handle, spec, ctx
+
+    def _prepare_run_handle(
+        self,
+        task: models.Task,
+        git: GitOpsEngine,
+        adapter: AgentAdapter,
+    ) -> tuple[WorktreeHandle, Optional[str]]:
+        """Create or recover the task worktree for a new run.
+
+        A failed task may still have a valid worktree and resumable agent
+        session. Reuse both so manual retries and automatic retries continue
+        from the failed attempt instead of discarding partial progress.
+        """
+        latest = self._latest_run(task.id)
+        can_resume = (
+            task.status == TaskStatus.failed.value
+            and bool(task.worktree_path)
+            and bool(task.branch)
+            and Path(task.worktree_path or "").exists()
+            and adapter.supports_resume()
+            and latest is not None
+            and bool(latest.session_id)
         )
+        if can_resume:
+            handle = WorktreeHandle(
+                task_id=str(task.id),
+                path=task.worktree_path or "",
+                branch=task.branch or "",
+                base_sha=git.merge_base(task.branch or ""),
+                created_at="",
+            )
+            self._update_task(task.id, status=TaskStatus.running.value, error=None)
+            return handle, latest.session_id
+
+        # If there is no resumable state, clear any stale attempt before
+        # creating a fresh branch/worktree off the default branch.
+        git.reset_worktree(task.id)
+        handle = git.create_worktree(task.id)
+        self._update_task(
+            task.id,
+            branch=handle.branch,
+            worktree_path=handle.path,
+            status=TaskStatus.running.value,
+            error=None,
+        )
+        return handle, None
 
     async def revise_task(self, task_id: int, run_id: int) -> models.Task:
         """Re-run the agent in the task's existing worktree to address review.
@@ -365,12 +425,60 @@ class Orchestrator:
         )
         spec = TaskSpec(goal=spec_goal)
         ctx = RunContext(worktree_path=worktree_path, system_prompt=system_prompt)
-        return await self._drive_run(
+        result = await self._drive_run_once(
             task_id, run_id, agent_name, project_path, git, handle, spec, ctx
         )
+        if result.exception:
+            raise result.exception
+        return result.task
 
-    async def _drive_run(self, task_id, run_id, agent_name, project_path,
-                         git, handle, spec, ctx) -> models.Task:
+    async def _drive_run_with_retries(
+        self,
+        task_id: int,
+        agent_name: str,
+        project_path: str,
+        git: GitOpsEngine,
+        handle: WorktreeHandle,
+        spec: TaskSpec,
+        system_prompt: str,
+        resume_session_id: Optional[str] = None,
+    ) -> models.Task:
+        attempt = 1
+        next_resume_session_id = resume_session_id
+
+        while True:
+            run_id = self._create_run(task_id, agent_name)
+            ctx = RunContext(
+                worktree_path=handle.path,
+                system_prompt=system_prompt,
+                resume_session_id=next_resume_session_id,
+            )
+            result = await self._drive_run_once(
+                task_id, run_id, agent_name, project_path, git, handle, spec, ctx
+            )
+            if result.success:
+                return result.task
+
+            classified = classify_error(result.error_text, result.error_kind)
+            if not self.retry_policy.should_retry(attempt, classified):
+                if result.exception:
+                    raise result.exception
+                return result.task
+
+            next_resume_session_id = result.session_id or next_resume_session_id
+            self._update_task(
+                task_id,
+                status=TaskStatus.running.value,
+                error=(
+                    f"retrying after {classified.reason} "
+                    f"(attempt {attempt + 1}/{self.retry_policy.max_attempts})"
+                ),
+            )
+            await self.retry_policy.sleep_before_retry(attempt)
+            attempt += 1
+
+    async def _drive_run_once(self, task_id, run_id, agent_name, project_path,
+                              git, handle, spec, ctx) -> _DriveResult:
         """Stream an adapter run into storage, capture the diff, settle status.
 
         Shared tail of run_task and revise_task: only the worktree setup (fresh
@@ -383,6 +491,7 @@ class Orchestrator:
         session_id: Optional[str] = None
         had_error = False
         error_text = ""
+        error_kind = ""
         agg = {"cost": 0.0, "in": 0, "out": 0, "dur": 0}
         try:
             async for ev in adapter.run(spec, ctx):
@@ -400,10 +509,18 @@ class Orchestrator:
                 elif ev.type == EventType.error:
                     had_error = True
                     error_text = ev.text or error_text
+                    error_kind = ev.data.get("kind") or error_kind
         except Exception as exc:
             self._finish_run(run_id, RunStatus.failed, session_id, agg, diff_ref=None)
             self._set_failed(task_id, f"run error: {exc}")
-            raise
+            return _DriveResult(
+                task=self.get_task(task_id),
+                success=False,
+                error_text=str(exc),
+                error_kind="runtime",
+                session_id=session_id,
+                exception=exc,
+            )
 
         diff = git.snapshot_and_diff(handle)
         diff_ref = memory.save_diff(project_path, task_id, diff.unified_diff)
@@ -419,10 +536,17 @@ class Orchestrator:
         })
 
         final_status = TaskStatus.failed if had_error else TaskStatus.awaiting_approval
-        return self._update_task(
+        updated = self._update_task(
             task_id,
             status=final_status.value,
             error=(error_text.strip()[:2000] or "the agent reported an error") if had_error else None,
+        )
+        return _DriveResult(
+            task=updated,
+            success=not had_error,
+            error_text=error_text,
+            error_kind=error_kind,
+            session_id=session_id,
         )
 
     @staticmethod
@@ -839,6 +963,14 @@ class Orchestrator:
                     .order_by(models.Run.id)
                 ).all()
             )
+
+    def _latest_run(self, task_id: int) -> Optional[models.Run]:
+        with Session(self.engine) as s:
+            return s.exec(
+                select(models.Run)
+                .where(models.Run.task_id == task_id)
+                .order_by(models.Run.id.desc())
+            ).first()
 
     def list_events(self, run_id: int) -> list[models.Event]:
         with Session(self.engine) as s:
