@@ -181,6 +181,67 @@ def create_project(body: ProjectCreate, orch: Orchestrator = Depends(get_orchest
     return orch.create_project(body.name, body.path, init=body.init)
 
 
+class BrowseDirectoryRequest(BaseModel):
+    path: str = ""  # Empty string means home directory
+
+
+class DirectoryEntry(BaseModel):
+    name: str
+    path: str
+    is_dir: bool
+    is_git: bool = False  # True if this directory contains a .git folder
+
+
+class BrowseDirectoryResponse(BaseModel):
+    current_path: str
+    parent_path: str | None
+    entries: list[DirectoryEntry]
+
+
+@router.post("/browse-directory", response_model=BrowseDirectoryResponse)
+def browse_directory(body: BrowseDirectoryRequest):
+    """Browse directories on the server filesystem.
+
+    Used by the frontend directory picker when adding projects.
+    Only returns directories, not files.
+    """
+    import os
+
+    # Start from home directory if path is empty
+    target_path = body.path.strip() if body.path else str(Path.home())
+    target = Path(target_path).expanduser().resolve()
+
+    if not target.exists():
+        raise HTTPException(400, f"Path does not exist: {target}")
+    if not target.is_dir():
+        raise HTTPException(400, f"Path is not a directory: {target}")
+
+    entries: list[DirectoryEntry] = []
+    try:
+        for item in sorted(target.iterdir(), key=lambda x: x.name.lower()):
+            # Skip hidden files/folders (starting with .)
+            if item.name.startswith("."):
+                continue
+            if item.is_dir():
+                is_git = (item / ".git").exists()
+                entries.append(DirectoryEntry(
+                    name=item.name,
+                    path=str(item),
+                    is_dir=True,
+                    is_git=is_git,
+                ))
+    except PermissionError:
+        raise HTTPException(403, f"Permission denied: {target}")
+
+    parent_path = str(target.parent) if target.parent != target else None
+
+    return BrowseDirectoryResponse(
+        current_path=str(target),
+        parent_path=parent_path,
+        entries=entries,
+    )
+
+
 @router.get("/projects", response_model=list[models.Project])
 def list_projects(
     include_archived: bool = False,

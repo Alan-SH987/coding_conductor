@@ -170,6 +170,19 @@ export interface TaskAttachment {
   size: number;
 }
 
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  is_git: boolean;
+}
+
+export interface BrowseDirectoryResponse {
+  current_path: string;
+  parent_path: string | null;
+  entries: DirectoryEntry[];
+}
+
 // ---------- transport ----------
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -300,4 +313,7 @@ export const api = {
       selected_task_ids: selectedTaskIds,
       action,
     }),
+
+  browseDirectory: (path = "") =>
+    post<BrowseDirectoryResponse>("/browse-directory", { path }),
 };
