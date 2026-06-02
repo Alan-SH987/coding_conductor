@@ -28,8 +28,10 @@ from app import memory, skills
 from app.adapters.base import AgentAdapter, EventType, RunContext, TaskSpec
 from app.gitops import GitOpsEngine, NotAGitRepo
 from app.gitops.models import WorktreeHandle
+from app.orchestrator.concurrency_limiter import ConcurrencyLimiter, ConcurrencyLimitReached
 from app.orchestrator.error_classifier import classify_error
 from app.orchestrator.model_router import ModelRouter
+from app.orchestrator.queue_manager import TaskQueueManager, QueueFull, TaskAlreadyQueued
 from app.orchestrator.retry_policy import RetryPolicy
 from app.orchestrator.routing import select_agent
 from app.orchestrator.smart_decomposer import (
@@ -38,6 +40,7 @@ from app.orchestrator.smart_decomposer import (
     ResultMerger,
 )
 from app.storage import models
+from app.storage.models import QueuePriority
 from app.storage.db import engine as default_engine
 
 logger = logging.getLogger(__name__)
@@ -97,6 +100,11 @@ class Orchestrator:
         # task_id -> in-flight asyncio Task. In-memory only; on restart the
         # registry is empty and a stuck "running" task can simply be re-run.
         self._running: dict[int, asyncio.Task] = {}
+        # Task queue and concurrency control
+        self.queue_manager = TaskQueueManager(self.engine)
+        self.concurrency_limiter = ConcurrencyLimiter(self.engine)
+        # Wire up the queue to start tasks through this orchestrator
+        self.queue_manager.set_start_callback(self._start_from_queue)
 
     # ---------- projects ----------
     def create_project(self, name: str, path: str, init: bool = True) -> models.Project:
@@ -219,12 +227,21 @@ class Orchestrator:
                 select(models.Task.id).where(models.Task.parent_id == task_id)
             ).first() is not None
 
-    def start_run(self, task_id: int) -> models.Task:
+    def start_run(
+        self,
+        task_id: int,
+        priority: str = QueuePriority.normal.value,
+        enqueue_if_busy: bool = True,
+    ) -> models.Task:
         """Launch run_task in the background and return immediately.
 
         The task is flipped to ``running`` synchronously so the caller (and the
         SSE stream) sees the transition right away; the agent then drives in a
         detached asyncio Task. Requires a running event loop.
+
+        If concurrency limit is reached and enqueue_if_busy is True, the task
+        is added to the queue instead. Set enqueue_if_busy=False to raise
+        ConcurrencyLimitReached instead.
         """
         task = self.get_task(task_id)
         if task is None:
@@ -236,19 +253,50 @@ class Orchestrator:
         if self._has_children(task_id):
             raise NotRunnable(task_id)
 
+        # Check concurrency limit
+        status = self.concurrency_limiter.get_status(task.project_id)
+        if not status["can_start"]:
+            if enqueue_if_busy:
+                # Add to queue instead of running
+                self.queue_manager.enqueue(task_id, task.project_id, priority)
+                return self.get_task(task_id)  # status is now "queued"
+            else:
+                raise ConcurrencyLimitReached(
+                    task.project_id, status["running"], status["max_concurrent"]
+                )
+
+        return self._start_run_immediate(task_id)
+
+    def _start_run_immediate(self, task_id: int) -> models.Task:
+        """Actually start running a task (bypasses queue check)."""
         self._set_status(task_id, TaskStatus.running)
         loop_task = asyncio.create_task(self._run_guarded(task_id))
         self._running[task_id] = loop_task
         loop_task.add_done_callback(lambda _f: self._running.pop(task_id, None))
         return self.get_task(task_id)
 
+    async def _start_from_queue(self, task_id: int) -> models.Task:
+        """Callback for queue manager to start a task."""
+        return self._start_run_immediate(task_id)
+
     async def _run_guarded(self, task_id: int) -> None:
         # run_task already records failed status on error; just keep the
         # detached task from surfacing an "exception never retrieved" warning.
+        project_id = None
         try:
+            task = self.get_task(task_id)
+            if task:
+                project_id = task.project_id
             await self.run_task(task_id)
         except Exception:
             logger.exception("run_task(%s) crashed", task_id)
+        finally:
+            # Task finished (success or failure), process queue for this project
+            if project_id is not None:
+                try:
+                    await self.queue_manager.on_task_completed(project_id)
+                except Exception:
+                    logger.exception("queue processing after task %s failed", task_id)
 
     def start_revise(self, task_id: int) -> models.Task:
         """Re-run an at-gate task in its existing worktree to address review.
@@ -1050,6 +1098,66 @@ class Orchestrator:
         self._update_task(
             task_id, status=TaskStatus.failed.value, error=(reason or "").strip()[:2000] or None
         )
+
+    # ---------- queue management ----------
+    def enqueue_task(
+        self,
+        task_id: int,
+        priority: str = QueuePriority.normal.value,
+    ) -> models.Task:
+        """Add a task to the queue without starting it immediately."""
+        task = self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"task {task_id} not found")
+        self.queue_manager.enqueue(task_id, task.project_id, priority)
+        return self.get_task(task_id)
+
+    def cancel_queued_task(self, task_id: int) -> models.Task:
+        """Remove a task from queue without running it."""
+        self.queue_manager.cancel(task_id)
+        return self.get_task(task_id)
+
+    def get_queue_status(self, project_id: int) -> dict:
+        """Get queue and concurrency status for a project."""
+        queue_status = self.queue_manager.get_queue_status(project_id)
+        concurrency_status = self.concurrency_limiter.get_status(project_id)
+        return {**queue_status, **concurrency_status}
+
+    def list_queued_tasks(self, project_id: Optional[int] = None) -> list:
+        """List all queued tasks."""
+        return self.queue_manager.list_queued(project_id)
+
+    def update_queue_priority(
+        self, task_id: int, priority: str
+    ) -> Optional[models.QueueEntry]:
+        """Update priority of a queued task."""
+        return self.queue_manager.update_priority(task_id, priority)
+
+    def get_concurrency_config(
+        self, project_id: Optional[int] = None
+    ) -> models.ConcurrencyConfig:
+        """Get concurrency configuration."""
+        return self.queue_manager.get_config(project_id)
+
+    def update_concurrency_config(
+        self,
+        project_id: Optional[int] = None,
+        max_concurrent: Optional[int] = None,
+        max_queued: Optional[int] = None,
+        priority_mode: Optional[str] = None,
+    ) -> models.ConcurrencyConfig:
+        """Update concurrency configuration."""
+        cfg = self.queue_manager.update_config(
+            project_id, max_concurrent, max_queued, priority_mode
+        )
+        # Also update the limiter's in-memory state
+        if max_concurrent is not None and project_id is not None:
+            self.concurrency_limiter.update_limit(project_id, max_concurrent)
+        return cfg
+
+    async def process_queue(self, project_id: int) -> int:
+        """Manually trigger queue processing for a project."""
+        return await self.queue_manager.process_queue(project_id)
 
     def reconcile_orphaned_runs(self) -> int:
         """Reconcile tasks left 'running' by a server restart (called at startup).

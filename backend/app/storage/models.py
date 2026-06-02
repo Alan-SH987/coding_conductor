@@ -113,3 +113,39 @@ class TaskSuggestion(SQLModel, table=True):
     selected_task_ids: str = "[]"  # JSON array of task IDs user selected
     action_taken: Optional[str] = None  # 'selected' | 'skipped' | 'created_new'
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class QueuePriority(str, Enum):
+    """Priority levels for queued tasks."""
+    low = "low"
+    normal = "normal"
+    high = "high"
+    urgent = "urgent"
+
+
+class ConcurrencyConfig(SQLModel, table=True):
+    """Concurrency limits per project or global (project_id=None)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    # None means global config; otherwise project-specific
+    project_id: Optional[int] = Field(default=None, foreign_key="project.id")
+    max_concurrent: int = 3  # Max tasks running at once
+    max_queued: int = 50  # Max tasks waiting in queue
+    # Priority mode: fifo (first-in-first-out), priority (by priority field)
+    priority_mode: str = "fifo"
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class QueueEntry(SQLModel, table=True):
+    """A task waiting in queue to be executed."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    task_id: int = Field(foreign_key="task.id", index=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    priority: str = Field(default=QueuePriority.normal.value)
+    # Position in queue (lower = earlier); auto-assigned on enqueue
+    position: int = 0
+    enqueued_at: datetime = Field(default_factory=utcnow)
+    # When the task was picked up from queue (None if still waiting)
+    started_at: Optional[datetime] = None
+    # Reason if removed without running (e.g., "cancelled", "expired")
+    removed_reason: Optional[str] = None
