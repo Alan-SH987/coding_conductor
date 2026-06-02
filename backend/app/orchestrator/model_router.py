@@ -135,19 +135,13 @@ class TaskComplexity:
 
 
 class ModelRouter:
-    """Routes tasks to appropriate models based on complexity and availability."""
+    """Routes a task to the AI tool whose strengths fit it (Claude vs Codex)."""
 
-    # Model tier configurations
-    TIER_CONFIGS = {
-        "fast": {
-            "models": ["haiku", "sonnet-3-5"],  # Ordered by preference
-            "description": "Fast, cost-effective models for simple tasks",
-        },
-        "powerful": {
-            "models": ["sonnet-4-5", "opus"],  # Ordered by preference
-            "description": "Advanced models for complex reasoning",
-        },
-    }
+    # Strength-based tool routing — the whole policy in one line. Flip the mapping
+    # to change which tool gets which kind of task.
+    #   "powerful" (complex reasoning / architecture / design / refactor) -> claude
+    #   "fast"     (straightforward, well-scoped coding / docs / fixes)    -> codex
+    TIER_TOOL = {"powerful": "claude", "fast": "codex"}
 
     def __init__(self, available_models: Optional[list[str]] = None):
         """Initialize router with available models.
@@ -173,33 +167,18 @@ class ModelRouter:
         Returns:
             Model name to use
         """
-        # Determine complexity tier
+        # Complexity tier -> the tool whose strengths fit it.
         tier = prefer_tier or TaskComplexity.analyze(title, description)
+        preferred = self.TIER_TOOL.get(tier, "claude")
 
-        # Get models for this tier
-        config = self.TIER_CONFIGS.get(tier, self.TIER_CONFIGS["powerful"])
-        models = config["models"]
+        if self.available_models is None or preferred in self.available_models:
+            return preferred
 
-        # Filter by availability
-        if self.available_models:
-            models = [m for m in models if m in self.available_models]
-
-        # Return first available model, or fall back
-        if models:
-            return models[0]
-
-        # Fallback: try the other tier
-        other_tier = "fast" if tier == "powerful" else "powerful"
-        other_models = self.TIER_CONFIGS[other_tier]["models"]
-
-        if self.available_models:
-            other_models = [m for m in other_models if m in self.available_models]
-
-        if other_models:
-            return other_models[0]
-
-        # Ultimate fallback
-        return "sonnet-4-5"
+        # Preferred tool unavailable: try the other tool, then anything available.
+        other = "codex" if preferred == "claude" else "claude"
+        if other in self.available_models:
+            return other
+        return next(iter(sorted(self.available_models)), "claude")
 
     def explain_choice(self, model: str, title: str, description: str = "") -> str:
         """Explain why a particular model was chosen.
@@ -215,8 +194,8 @@ class ModelRouter:
         tier = TaskComplexity.analyze(title, description)
 
         if tier == "fast":
-            reason = "Task appears straightforward (formatting, docs, simple changes)"
+            reason = "task appears straightforward (formatting, docs, simple changes)"
         else:
-            reason = "Task requires complex reasoning (architecture, algorithms, system design)"
+            reason = "task requires complex reasoning (architecture, algorithms, system design)"
 
-        return f"Selected {model}: {reason}"
+        return f"Auto-selected {model}: {reason}"

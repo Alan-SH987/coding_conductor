@@ -79,52 +79,30 @@ class TestTaskComplexity:
 class TestModelRouter:
     """Test model routing logic."""
 
-    def test_fast_tier_selection(self):
+    def test_complex_routes_to_claude(self):
         router = ModelRouter()
-        model = router.select_model("Fix formatting")
-        assert model in ["haiku", "sonnet-3-5"]
+        assert router.select_model("Refactor the architecture") == "claude"
 
-    def test_powerful_tier_selection(self):
+    def test_simple_routes_to_codex(self):
         router = ModelRouter()
-        model = router.select_model("Refactor architecture")
-        assert model in ["sonnet-4-5", "opus"]
+        assert router.select_model("Fix formatting") == "codex"
 
-    def test_respects_available_models_fast(self):
-        router = ModelRouter(available_models=["sonnet-3-5", "opus"])
-        model = router.select_model("Fix formatting")
-        assert model == "sonnet-3-5"
+    def test_falls_back_when_preferred_tool_unavailable(self):
+        # complex task but only Codex available -> Codex
+        router = ModelRouter(available_models=["codex"])
+        assert router.select_model("Refactor the architecture") == "codex"
+        # simple task but only Claude available -> Claude
+        router = ModelRouter(available_models=["claude"])
+        assert router.select_model("Fix formatting") == "claude"
 
-    def test_respects_available_models_powerful(self):
-        router = ModelRouter(available_models=["haiku", "opus"])
-        model = router.select_model("Refactor architecture")
-        assert model == "opus"
-
-    def test_fallback_to_other_tier(self):
-        # Only fast models available, but task is complex
+    def test_ultimate_fallback_to_any_available(self):
         router = ModelRouter(available_models=["haiku"])
-        model = router.select_model("Refactor architecture")
-        assert model == "haiku"
-
-    def test_fallback_to_other_tier_reverse(self):
-        # Only powerful models available, but task is simple
-        router = ModelRouter(available_models=["opus"])
-        model = router.select_model("Fix formatting")
-        assert model == "opus"
-
-    def test_ultimate_fallback(self):
-        # No models match configured tiers
-        router = ModelRouter(available_models=["unknown-model"])
-        model = router.select_model("Do something")
-        assert model == "sonnet-4-5"  # Default fallback
+        assert router.select_model("Do something") == "haiku"
 
     def test_prefer_tier_override(self):
         router = ModelRouter()
-        # Force fast tier even for complex task
-        model = router.select_model(
-            "Refactor architecture",
-            prefer_tier="fast"
-        )
-        assert model in ["haiku", "sonnet-3-5"]
+        # force the fast tier on a complex task -> Codex
+        assert router.select_model("Refactor architecture", prefer_tier="fast") == "codex"
 
     def test_explain_choice_fast(self):
         router = ModelRouter()

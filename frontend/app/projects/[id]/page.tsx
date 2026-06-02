@@ -29,7 +29,7 @@ export default function ProjectPage({
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [agent, setAgent] = useState("claude");
+  const [agent, setAgent] = useState("auto");
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -151,16 +151,6 @@ export default function ProjectPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
-  // Default the agent picker to a real adapter (the "/agents" list includes a
-  // synthetic "auto" that create_task rejects).
-  useEffect(() => {
-    const real = agents.filter((a) => a.name !== "auto");
-    if (real.length && !real.some((a) => a.name === agent)) {
-      setAgent(real[0].name);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agents]);
-
   useEffect(() => {
     // Auto-scroll when tasks update or live events change
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -280,7 +270,9 @@ export default function ProjectPage({
   const childParentIds = new Set(
     tasks.filter((t) => t.parent_id != null).map((t) => t.parent_id as number),
   );
-  const realAgents = agents.filter((a) => a.name !== "auto");
+  // Show every option including "auto" (smart routing). The /agents list puts
+  // "auto" first, so it leads the dropdown and is the default.
+  const realAgents = agents;
 
   return (
     <div className="flex h-[calc(100vh-9rem)] gap-4">
