@@ -15,6 +15,7 @@ import { ConversationTurn } from "@/components/chat/ConversationTurn";
 import { AgentsHealth } from "@/components/chat/AgentsHealth";
 import { SkillsControl } from "@/components/chat/SkillsControl";
 import { DistillButton } from "@/components/chat/DistillButton";
+import { AutoHealControl } from "@/components/chat/AutoHealControl";
 import {
   RightPanel,
   type PanelKind,
@@ -688,6 +689,11 @@ export default function ProjectPage({
                 onChanged={load}
               />
               <DistillButton projectId={projectId} />
+              <AutoHealControl
+                projectId={projectId}
+                rounds={project?.auto_heal_rounds ?? 0}
+                onChanged={load}
+              />
             </div>
             <div className="flex items-center gap-2 text-xs">
               {editingVerify ? (

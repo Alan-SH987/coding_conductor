@@ -18,6 +18,7 @@ export interface Project {
   quota_cost_usd: number | null;
   verify_cmd: string | null;
   enabled_skills: string | null;
+  auto_heal_rounds: number;
 }
 
 export interface Skill {
@@ -262,6 +263,8 @@ export const api = {
   listSkills: () => http<Skill[]>("/skills"),
   updateProjectSkills: (id: number, enabled: string[]) =>
     patch<Project>(`/projects/${id}/skills`, { enabled }),
+  updateProjectAutoHeal: (id: number, rounds: number) =>
+    patch<Project>(`/projects/${id}/auto-heal`, { rounds }),
   distillProject: (id: number) =>
     post<{ status: string; running: boolean; insights?: string }>(`/projects/${id}/distill`),
 

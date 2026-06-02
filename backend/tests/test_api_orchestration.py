@@ -737,6 +737,55 @@ def test_distill_no_handoffs_is_noop(repo, tmp_path):
     assert not (memory.memory_dir(proj.path) / "insights.md").exists()
 
 
+def test_auto_heal_revises_until_review_approves(repo, tmp_path):
+    """With auto_heal_rounds set, a request_changes verdict auto-revises, and a
+    clean re-review stops the loop — all before the human gate (never merges)."""
+    verdicts = iter(["request_changes", "approve"])
+
+    class HealAdapter(FakeAdapter):
+        async def review(self, goal, diff, repo_path) -> ReviewResult:
+            try:
+                v = next(verdicts)
+            except StopIteration:
+                v = "approve"
+            return ReviewResult(verdict=v, summary="self-review", findings=[])
+
+    db = tmp_path / "heal.db"
+    eng = create_engine(f"sqlite:///{db}", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(eng)
+    orch = Orchestrator({"claude": HealAdapter()}, engine=eng)
+    proj = orch.create_project("p", str(repo))
+    orch.update_project_auto_heal(proj.id, 2)
+    task = orch.create_task(proj.id, "add feature")
+
+    asyncio.run(orch.run_task(task.id))
+
+    t = orch.get_task(task.id)
+    assert t.status == "awaiting_approval"  # human still gates; never auto-merged
+    # original run + exactly one auto-revise (loop stopped when the 2nd review approved)
+    assert len(orch.list_runs(task.id)) == 2
+    latest = orch.get_latest_review(task.id)
+    assert latest is not None and latest.verdict == "approve"
+
+
+def test_auto_heal_off_by_default(repo, tmp_path):
+    """Default project has auto_heal_rounds=0: run_task does no review/revise."""
+    db = tmp_path / "noheal.db"
+    eng = create_engine(f"sqlite:///{db}", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(eng)
+    orch = Orchestrator({"claude": FakeAdapter()}, engine=eng)
+    proj = orch.create_project("p", str(repo))
+    assert proj.auto_heal_rounds == 0
+    task = orch.create_task(proj.id, "add feature")
+
+    asyncio.run(orch.run_task(task.id))
+
+    t = orch.get_task(task.id)
+    assert t.status == "awaiting_approval"
+    assert len(orch.list_runs(task.id)) == 1  # no auto-revise run
+    assert orch.get_latest_review(task.id) is None  # no auto-review
+
+
 def test_handoff_cache_invalidates_after_record(repo):
     from app import memory
 

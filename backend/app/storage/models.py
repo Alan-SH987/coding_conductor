@@ -46,6 +46,10 @@ class Project(SQLModel, table=True):
     # JSON list of globally-installed skill names enabled for this project; their
     # instructions are injected into the agent's system prompt. None/[] = none.
     enabled_skills: Optional[str] = None
+    # Auto self-heal: after a successful run, the agent self-reviews its diff and
+    # auto-revises up to this many times (0 = off, opt-in). Always stops at the
+    # human gate, never auto-merges.
+    auto_heal_rounds: int = 0
 
 
 class Task(SQLModel, table=True):

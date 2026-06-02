@@ -403,7 +403,7 @@ class Orchestrator:
             ),
             skills.build_skills_bundle(skills.parse_enabled(enabled_skills)),
         ]
-        return await self._drive_run_with_retries(
+        result_task = await self._drive_run_with_retries(
             task_id=task_id,
             agent_name=agent_name,
             project_path=project_path,
@@ -414,6 +414,11 @@ class Orchestrator:
             resume_session_id=resume_session_id,
             attachment_paths=attachment_paths,
         )
+        # After a clean run, optionally let the agent self-review and revise its
+        # own diff before the human gate (bounded, best-effort, never auto-merges).
+        if result_task is not None and result_task.status == TaskStatus.awaiting_approval.value:
+            await self._auto_heal(task_id)
+        return self.get_task(task_id)
 
     def _prepare_run_handle(
         self,
@@ -637,6 +642,61 @@ class Orchestrator:
             error_kind=error_kind,
             session_id=session_id,
         )
+
+    async def _auto_heal(self, task_id: int) -> None:
+        """Self-review-and-revise loop after a successful run, before the gate.
+
+        Reuses review_task (an AI verdict on the captured diff) and revise_task
+        (re-run in the same worktree to address it): review -> if request_changes,
+        revise -> re-review, bounded by the project's auto_heal_rounds. Pure (works
+        off the diff — no deps, never touches main) and best-effort: any failure
+        just stops. Never merges; the human still gates the result, and the task is
+        never left worse than awaiting_approval.
+        """
+        task = self.get_task(task_id)
+        if task is None:
+            return
+        project = self.get_project(task.project_id)
+        rounds = getattr(project, "auto_heal_rounds", 0) or 0
+        if rounds <= 0 or select_agent("review", self.adapters) is None:
+            return
+
+        try:
+            review = await self.review_task(task_id)
+        except Exception:  # noqa: BLE001 - best-effort; never fail the task
+            logger.info("auto-heal(%s): initial review skipped", task_id, exc_info=True)
+            return
+
+        used = 0
+        while review is not None and review.verdict == "request_changes" and used < rounds:
+            current = self.get_task(task_id)
+            if current is None or current.status != TaskStatus.awaiting_approval.value:
+                break
+            try:
+                self.check_quota(current.project_id)
+            except QuotaExceeded:
+                logger.info("auto-heal(%s): stopping, quota exceeded", task_id)
+                break
+            try:
+                run_id = self._create_run(task_id, current.assigned_agent)
+                self._set_status(task_id, TaskStatus.running)
+                await self.revise_task(task_id, run_id)
+            except Exception:  # noqa: BLE001
+                logger.exception("auto-heal(%s): revise failed", task_id)
+                break
+            used += 1
+            try:
+                review = await self.review_task(task_id)
+            except Exception:  # noqa: BLE001
+                logger.info("auto-heal(%s): re-review skipped", task_id, exc_info=True)
+                break
+
+        # Safety net: auto-heal must never downgrade a successful run. If a revise
+        # step left the task failed, restore it to the human gate (latest diff is
+        # still captured and the worktree intact).
+        final = self.get_task(task_id)
+        if final is not None and final.status == TaskStatus.failed.value:
+            self._update_task(task_id, status=TaskStatus.awaiting_approval.value, error=None)
 
     @staticmethod
     def _source_attachment_paths(project_path: str, task_id: int) -> list[Path]:
@@ -1076,6 +1136,20 @@ class Orchestrator:
             if proj is None or proj.deleted_at is not None:
                 return None
             proj.verify_cmd = verify_cmd or None
+            s.add(proj)
+            s.commit()
+            s.refresh(proj)
+            return proj
+
+    def update_project_auto_heal(
+        self, project_id: int, rounds: int
+    ) -> Optional[models.Project]:
+        """Set the auto self-heal round budget (0 = off; clamped to [0, 5])."""
+        with Session(self.engine) as s:
+            proj = s.get(models.Project, project_id)
+            if proj is None or proj.deleted_at is not None:
+                return None
+            proj.auto_heal_rounds = max(0, min(5, int(rounds)))
             s.add(proj)
             s.commit()
             s.refresh(proj)

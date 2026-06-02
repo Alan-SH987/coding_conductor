@@ -309,6 +309,23 @@ def update_project_verify(
     return proj
 
 
+class AutoHealUpdate(BaseModel):
+    rounds: int = 1
+
+
+@router.patch("/projects/{project_id}/auto-heal", response_model=models.Project)
+def update_project_auto_heal(
+    project_id: int,
+    body: AutoHealUpdate,
+    orch: Orchestrator = Depends(get_orchestrator),
+):
+    """Set the auto self-heal round budget (0 = off; clamped to [0, 5])."""
+    proj = orch.update_project_auto_heal(project_id, body.rounds)
+    if proj is None:
+        raise HTTPException(404, f"project {project_id} not found")
+    return proj
+
+
 class SkillsUpdate(BaseModel):
     enabled: list[str] = []
 

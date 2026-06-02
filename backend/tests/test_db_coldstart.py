@@ -62,9 +62,9 @@ def test_cold_start_fresh_db(tmp_path):
     assert "COLDSTART_OK" in proc.stdout
 
     cols = _columns(db, "project")
-    assert {"is_pinned", "is_archived", "deleted_at", "quota_tokens", "quota_cost_usd", "verify_cmd", "enabled_skills"} <= cols
+    assert {"is_pinned", "is_archived", "deleted_at", "quota_tokens", "quota_cost_usd", "verify_cmd", "enabled_skills", "auto_heal_rounds"} <= cols
     assert {"deleted_at", "error", "tags"} <= _columns(db, "task")
-    assert _alembic_version(db) == ["008"]
+    assert _alembic_version(db) == ["009"]
 
 
 def test_cold_start_old_schema_db(tmp_path):
@@ -89,8 +89,8 @@ def test_cold_start_old_schema_db(tmp_path):
     assert proc.returncode == 0, f"cold start failed:\nSTDOUT:{proc.stdout}\nSTDERR:{proc.stderr}"
 
     cols = _columns(db, "project")
-    assert {"is_pinned", "is_archived", "deleted_at", "quota_tokens", "quota_cost_usd", "verify_cmd", "enabled_skills"} <= cols
-    assert _alembic_version(db) == ["008"]
+    assert {"is_pinned", "is_archived", "deleted_at", "quota_tokens", "quota_cost_usd", "verify_cmd", "enabled_skills", "auto_heal_rounds"} <= cols
+    assert _alembic_version(db) == ["009"]
 
     con = sqlite3.connect(db)
     try:
