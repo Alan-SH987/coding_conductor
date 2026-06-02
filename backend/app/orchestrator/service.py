@@ -451,15 +451,17 @@ class Orchestrator:
                     files.append(tail.strip())
         return files
 
-    def _record_handoff(self, task, project) -> None:
-        """Distill a merged task into a shared-memory handoff entry (best-effort).
+    def _record_handoff(self, task, project, outcome: str = "merged") -> None:
+        """Distill a finished task into a shared-memory handoff entry (best-effort).
 
-        The write side of the memory loop: cheap/deterministic (no extra LLM
-        call) — title + changed files + the existing AI review, if any.
+        Write side of the memory loop: cheap/deterministic (no extra LLM call) —
+        title + changed files + the existing AI review. ``outcome`` is "merged" or
+        "rejected"; rejected entries also list the review findings so future runs
+        learn what to avoid.
         """
         try:
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            lines = [f"### task {task.id}: {task.title} ({today})"]
+            lines = [f"### task {task.id}: {task.title} ({outcome}, {today})"]
             files = self._changed_files(task.id)
             if files:
                 shown = ", ".join(files[:10]) + (" …" if len(files) > 10 else "")
@@ -468,8 +470,19 @@ class Orchestrator:
             if review:
                 summary = " ".join((review.summary or "").split())[:200]
                 lines.append(f"- review: {review.verdict}" + (f" — {summary}" if summary else ""))
+                if outcome == "rejected":
+                    try:
+                        findings = json.loads(review.findings_json or "[]")
+                    except (ValueError, TypeError):
+                        findings = []
+                    for f in findings[:5]:
+                        if isinstance(f, dict) and f.get("comment"):
+                            sev = f.get("severity") or "note"
+                            loc = (f.get("file") or "").strip()
+                            where = f"{loc}: " if loc else ""
+                            lines.append(f"  - [{sev}] {where}{f['comment']}")
             memory.record_handoff(project.path, "\n".join(lines))
-        except Exception:  # noqa: BLE001 - memory is best-effort, never block a merge
+        except Exception:  # noqa: BLE001 - memory is best-effort, never block
             logger.exception("record_handoff(%s) failed", task.id)
 
     # ---------- review (advisory) ----------
@@ -766,7 +779,9 @@ class Orchestrator:
         task, project = self._task_and_project(task_id)
         git = GitOpsEngine(project.path)
         git.remove_worktree(self._handle_from_task(task))
-        return self._update_task(task_id, status=TaskStatus.rejected.value)
+        result = self._update_task(task_id, status=TaskStatus.rejected.value)
+        self._record_handoff(task, project, "rejected")
+        return result
 
     # ---------- helpers ----------
     def _task_and_project(self, task_id: int):

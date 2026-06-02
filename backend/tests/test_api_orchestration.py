@@ -577,3 +577,32 @@ def test_merge_records_handoff_memory(repo, tmp_path):
     bundle = memory.build_context_bundle(proj.path)
     assert "add a feature" in bundle
     assert "feature.txt" in bundle
+
+
+def test_reject_records_handoff_memory(repo, tmp_path):
+    """A rejected task is recorded as a lesson in shared memory."""
+    import asyncio
+    from pathlib import Path
+
+    from sqlmodel import SQLModel, create_engine
+
+    from app import memory
+
+    class EditAdapter(FakeAdapter):
+        async def run(self, spec, ctx):
+            yield AgentEvent(EventType.meta, data={"session_id": "x"})
+            (Path(ctx.worktree_path) / "feature.txt").write_text("hello\n")
+            yield AgentEvent(EventType.final, text="done", data={"session_id": "x"})
+
+    db = tmp_path / "reject.db"
+    eng = create_engine(f"sqlite:///{db}", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(eng)
+    orch = Orchestrator({"claude": EditAdapter()}, engine=eng)
+    proj = orch.create_project("p", str(repo))
+    task = orch.create_task(proj.id, "risky change")
+    asyncio.run(orch.run_task(task.id))
+    orch.reject_task(task.id)
+
+    bundle = memory.build_context_bundle(proj.path)
+    assert "risky change" in bundle
+    assert "rejected" in bundle.lower()
