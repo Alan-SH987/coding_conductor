@@ -610,3 +610,25 @@ def test_reject_records_handoff_memory(repo, tmp_path):
     bundle = memory.build_context_bundle(proj.path)
     assert "risky change" in bundle
     assert "rejected" in bundle.lower()
+
+
+def test_handoff_retrieved_by_keyword(repo):
+    """build_context_bundle injects the handoffs relevant to the task query."""
+    from app import memory
+
+    mem = memory.memory_dir(repo)
+    mem.mkdir(parents=True, exist_ok=True)
+    (mem / "handoff.md").write_text(
+        "# Handoff\n\n"
+        "### task 1: fix CSS formatting on the homepage\n- files: style.css\n\n"
+        "### task 2: refactor the authentication and login flow\n- files: auth.py\n"
+    )
+
+    # a query about auth surfaces the auth entry and drops the unrelated one
+    bundle = memory.build_context_bundle(repo, query="login auth flow problem")
+    assert "authentication and login flow" in bundle
+    assert "CSS formatting" not in bundle
+
+    # no query -> recency fallback returns both
+    both = memory.build_context_bundle(repo, query="")
+    assert "task 1" in both and "task 2" in both

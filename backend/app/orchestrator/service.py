@@ -291,7 +291,7 @@ class Orchestrator:
         run_id = self._create_run(task_id, agent_name)
         spec = TaskSpec(goal=spec_goal)
         bundle_parts = [
-            memory.build_context_bundle(project_path),
+            memory.build_context_bundle(project_path, query=spec_goal),
             skills.build_skills_bundle(skills.parse_enabled(enabled_skills)),
         ]
         ctx = RunContext(
@@ -332,7 +332,7 @@ class Orchestrator:
         findings = json.loads(review.findings_json) if review else []
         revision = self._compose_revision_prompt(summary, findings)
         bundle_parts = [
-            memory.build_context_bundle(project_path),
+            memory.build_context_bundle(project_path, query=spec_goal),
             skills.build_skills_bundle(skills.parse_enabled(enabled_skills)),
             revision,
         ]

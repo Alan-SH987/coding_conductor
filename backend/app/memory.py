@@ -11,6 +11,7 @@ MVP scope:
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -89,13 +90,43 @@ def _ensure_git_exclude(repo: Path) -> None:
         fh.write("\n".join(missing) + "\n")
 
 
-def build_context_bundle(repo_path: str | Path) -> str:
+# Lightweight tokens for keyword matching: English whole words plus Chinese
+# character bigrams (CJK has no word boundaries).
+_CJK_RANGE = "一-鿿"
+
+
+def _terms(text: str) -> set[str]:
+    text = text.lower()
+    latin = set(re.findall(r"[a-z0-9]{3,}", text))
+    cjk = re.findall(rf"[{_CJK_RANGE}]", text)
+    bigrams = {a + b for a, b in zip(cjk, cjk[1:])}
+    return latin | bigrams
+
+
+def _retrieve_handoffs(handoff_md: str, query: str, k: int = 5) -> list[str]:
+    """Up to k handoff entries most relevant to ``query`` by keyword overlap,
+    falling back to the most recent when there's no query or no match."""
+    body = handoff_md.split("\n", 1)[-1] if handoff_md.startswith("# Handoff") else handoff_md
+    entries = [e.strip() for e in re.split(r"(?=^### )", body, flags=re.M) if e.strip()]
+    if not entries:
+        return []
+    qterms = _terms(query)
+    if not qterms:
+        return entries[-k:]
+    scored = [(len(qterms & _terms(e)), i, e) for i, e in enumerate(entries)]
+    relevant = [
+        e for (s, i, e) in sorted(scored, key=lambda x: (x[0], x[1]), reverse=True)
+        if s > 0
+    ][:k]
+    return relevant or entries[-k:]
+
+
+def build_context_bundle(repo_path: str | Path, query: str = "") -> str:
     """Return shared memory to inject as system prompt, or '' if none.
 
-    Includes the human-curated global.md PLUS recent task handoffs accumulated by
-    record_handoff — bounded to the most recent slice so the prompt stays small.
-    This is the read side of the memory loop: each merged task's distilled entry
-    feeds the next run.
+    The human-curated global.md PLUS the task handoffs most relevant to ``query``
+    (the current task) by keyword overlap — recency as a fallback. Read side of
+    the memory loop; bounded so the prompt stays small.
     """
     mem = memory_dir(repo_path)
     parts: list[str] = []
@@ -110,7 +141,9 @@ def build_context_bundle(repo_path: str | Path) -> str:
     if handoff.exists():
         h = handoff.read_text().strip()
         if h and "(none)" not in h:  # real entries exist (seed placeholder gone)
-            parts.append("## Recent task handoffs (most recent last)\n\n" + h[-3000:])
+            entries = _retrieve_handoffs(h, query, k=5)
+            if entries:
+                parts.append("## Relevant task handoffs\n\n" + "\n\n".join(entries)[-3000:])
 
     if not parts:
         return ""
