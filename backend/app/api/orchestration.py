@@ -237,6 +237,23 @@ def update_project_skills(
     return proj
 
 
+@router.post("/projects/{project_id}/distill")
+async def distill_insights(project_id: int, orch: Orchestrator = Depends(get_orchestrator)):
+    """Distill this project's accumulated handoffs into high-level insights.
+
+    Manually triggered (it runs an LLM, so it's off the task hot path). Writes
+    insights.md alongside — never touching the human-curated global.md — and
+    returns the distilled text ("" if there are no handoffs yet).
+    """
+    if orch.get_project(project_id) is None:
+        raise HTTPException(404, f"project {project_id} not found")
+    try:
+        insights = await orch.distill_insights(project_id)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(409, str(exc))
+    return {"insights": insights}
+
+
 @router.get("/projects/{project_id}/usage")
 def get_project_usage(project_id: int, orch: Orchestrator = Depends(get_orchestrator)):
     """Get current usage statistics for a project."""

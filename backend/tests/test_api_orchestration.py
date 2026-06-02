@@ -632,3 +632,55 @@ def test_handoff_retrieved_by_keyword(repo):
     # no query -> recency fallback returns both
     both = memory.build_context_bundle(repo, query="")
     assert "task 1" in both and "task 2" in both
+
+
+def test_distill_writes_insights_separate_from_global(repo, tmp_path):
+    """distill_insights summarizes handoffs into insights.md (NOT global.md),
+    and the distilled text is injected into future runs."""
+    import asyncio
+
+    from sqlmodel import SQLModel, create_engine
+
+    from app import memory
+
+    class SummarizeAdapter(FakeAdapter):
+        async def run(self, spec, ctx):
+            yield AgentEvent(EventType.meta, data={"session_id": "x"})
+            yield AgentEvent(
+                EventType.final,
+                text="- prefer worktree isolation\n- mind the 64KB line buffer",
+                data={"session_id": "x"},
+            )
+
+    db = tmp_path / "distill.db"
+    eng = create_engine(f"sqlite:///{db}", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(eng)
+    orch = Orchestrator({"claude": SummarizeAdapter()}, engine=eng)
+    proj = orch.create_project("p", str(repo))
+    memory.record_handoff(proj.path, "### task 1: add worktrees\n- files: engine.py")
+
+    out = asyncio.run(orch.distill_insights(proj.id))
+    assert "prefer worktree isolation" in out
+
+    mem = memory.memory_dir(proj.path)
+    assert "prefer worktree isolation" in (mem / "insights.md").read_text()
+    assert "prefer worktree isolation" not in (mem / "global.md").read_text()  # untouched
+    assert "prefer worktree isolation" in memory.build_context_bundle(proj.path)  # injected
+
+
+def test_distill_no_handoffs_is_noop(repo, tmp_path):
+    """With no handoffs yet, distillation returns '' and writes nothing."""
+    import asyncio
+
+    from sqlmodel import SQLModel, create_engine
+
+    from app import memory
+
+    db = tmp_path / "distill_empty.db"
+    eng = create_engine(f"sqlite:///{db}", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(eng)
+    orch = Orchestrator({"claude": FakeAdapter()}, engine=eng)
+    proj = orch.create_project("p", str(repo))
+
+    assert asyncio.run(orch.distill_insights(proj.id)) == ""
+    assert not (memory.memory_dir(proj.path) / "insights.md").exists()

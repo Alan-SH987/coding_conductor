@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import tempfile
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -507,6 +508,55 @@ class Orchestrator:
             memory.record_handoff(project.path, "\n".join(lines))
         except Exception:  # noqa: BLE001 - memory is best-effort, never block
             logger.exception("record_handoff(%s) failed", task.id)
+
+    # ---------- distillation (manual, LLM-backed) ----------
+    async def distill_insights(self, project_id: int) -> str:
+        """Summarize accumulated handoffs into a few durable, high-level insights
+        and write them to insights.md (separate from the human-curated global.md).
+
+        The one memory step that needs an LLM, so it's manually triggered — never
+        on the hot path of a task run. Returns the distilled text ('' if no
+        handoffs yet).
+        """
+        project = self.get_project(project_id)
+        if project is None:
+            raise ValueError(f"project {project_id} not found")
+        handoffs = memory.read_handoffs(project.path)
+        if not handoffs:
+            return ""
+        adapter = self.adapters.get("claude") or next(iter(self.adapters.values()), None)
+        if adapter is None:
+            raise RuntimeError("no agent available to distill insights")
+        prompt = (
+            "You are maintaining a software project's long-term memory. Below are "
+            "accumulated per-task handoff notes. Distill them into a SHORT list of "
+            "durable, high-level insights about this codebase — recurring patterns, "
+            "gotchas, conventions, and decisions that will help future tasks. Write "
+            "3-8 concise bullets. Do NOT restate individual tasks or file lists. "
+            "Output only the bullets.\n\n=== HANDOFFS ===\n" + handoffs[-6000:]
+        )
+        text = (await self._summarize(adapter, prompt)).strip()
+        if text:
+            memory.write_insights(project.path, text)
+        return text
+
+    async def _summarize(self, adapter, prompt: str, timeout: int = 180) -> str:
+        """Run an adapter once in a throwaway dir and return its final/last message.
+
+        Used for one-off LLM calls (e.g. distillation) that aren't tied to a task
+        run, so nothing is persisted and the worktree is never touched.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = TaskSpec(goal=prompt)
+            ctx = RunContext(worktree_path=tmp, timeout=timeout)
+            finals: list[str] = []
+            messages: list[str] = []
+            async for ev in adapter.run(spec, ctx):
+                if ev.type == EventType.final and ev.text:
+                    finals.append(ev.text.strip())
+                elif ev.type == EventType.message and ev.text:
+                    messages.append(ev.text.strip())
+        return finals[-1] if finals else (messages[-1] if messages else "")
 
     # ---------- review (advisory) ----------
     async def review_task(self, task_id: int) -> models.Review:

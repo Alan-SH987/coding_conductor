@@ -137,6 +137,12 @@ def build_context_bundle(repo_path: str | Path, query: str = "") -> str:
         if content:
             parts.append(content)
 
+    insights = mem / "insights.md"
+    if insights.exists():
+        c = insights.read_text().strip()
+        if c:
+            parts.append(c)
+
     handoff = mem / "handoff.md"
     if handoff.exists():
         h = handoff.read_text().strip()
@@ -151,6 +157,29 @@ def build_context_bundle(repo_path: str | Path, query: str = "") -> str:
         "You are working within Coding Conductor. The following is shared "
         "project memory for this repository:\n\n" + "\n\n".join(parts)
     )
+
+
+def read_handoffs(repo_path: str | Path) -> str:
+    """The accumulated handoff entries, or '' if none (seed placeholder dropped)."""
+    f = memory_dir(repo_path) / "handoff.md"
+    if not f.exists():
+        return ""
+    h = f.read_text().strip()
+    return "" if (not h or "(none)" in h) else h
+
+
+def write_insights(repo_path: str | Path, text: str) -> None:
+    """Overwrite insights.md with a fresh distillation (machine-managed).
+
+    Kept SEPARATE from the human-curated global.md so auto-distillation never
+    clobbers hand-written memory. Injected into every run via build_context_bundle.
+    """
+    if not text or not text.strip():
+        return
+    f = memory_dir(repo_path) / "insights.md"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    f.write_text(f"# Distilled insights (auto-generated, {today})\n\n{text.strip()}\n")
 
 
 def record_handoff(repo_path: str | Path, entry: str) -> None:
