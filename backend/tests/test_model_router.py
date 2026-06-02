@@ -87,6 +87,14 @@ class TestModelRouter:
         router = ModelRouter()
         assert router.select_model("Fix formatting") == "codex"
 
+    def test_chinese_complex_routes_to_claude(self):
+        router = ModelRouter()
+        assert router.select_model("重构整个认证架构，重新设计数据库模型") == "claude"
+
+    def test_chinese_simple_routes_to_codex(self):
+        router = ModelRouter()
+        assert router.select_model("修复 README 里的错别字") == "codex"
+
     def test_falls_back_when_preferred_tool_unavailable(self):
         # complex task but only Codex available -> Codex
         router = ModelRouter(available_models=["codex"])

@@ -84,6 +84,19 @@ class TaskComplexity:
         r"\btrivial\b",
     ]
 
+    # Chinese keyword lists — matched as substrings (\b word boundaries don't
+    # apply to CJK, and Chinese tasks carry no English keywords at all).
+    SIMPLE_CJK = [
+        "格式", "缩进", "注释", "文档", "说明", "重命名", "错别字", "拼写",
+        "改文字", "日志", "删除无用", "微调", "小改", "措辞",
+    ]
+    COMPLEX_CJK = [
+        "重构", "架构", "设计", "迁移", "算法", "优化", "性能", "集成",
+        "数据库", "认证", "授权", "安全", "加密", "端到端", "全栈",
+        "并发", "分布式", "重写", "跨服务", "跨多个",
+    ]
+    QUICK_FIX_CJK = ["快速修", "小修", "热修", "琐碎", "临时", "简单"]
+
     @classmethod
     def analyze(cls, title: str, description: str = "") -> str:
         """Analyze task complexity and return recommended model tier.
@@ -94,43 +107,41 @@ class TaskComplexity:
         """
         text = f"{title} {description}".lower()
 
-        # Check for quick fix indicators first
-        for pattern in cls.QUICK_FIX_INDICATORS:
-            if re.search(pattern, text, re.IGNORECASE):
-                return "fast"
+        # Quick-fix wins outright (English regex or Chinese substring).
+        if (any(re.search(p, text, re.IGNORECASE) for p in cls.QUICK_FIX_INDICATORS)
+                or any(k in text for k in cls.QUICK_FIX_CJK)):
+            return "fast"
 
-        # Count complexity indicators
-        simple_count = sum(
-            1 for pattern in cls.SIMPLE_INDICATORS
-            if re.search(pattern, text, re.IGNORECASE)
+        # Count indicators across both languages.
+        simple_count = (
+            sum(1 for p in cls.SIMPLE_INDICATORS if re.search(p, text, re.IGNORECASE))
+            + sum(1 for k in cls.SIMPLE_CJK if k in text)
+        )
+        complex_count = (
+            sum(1 for p in cls.COMPLEX_INDICATORS if re.search(p, text, re.IGNORECASE))
+            + sum(1 for k in cls.COMPLEX_CJK if k in text)
         )
 
-        complex_count = sum(
-            1 for pattern in cls.COMPLEX_INDICATORS
-            if re.search(pattern, text, re.IGNORECASE)
-        )
-
-        # Length heuristic: longer descriptions often indicate complexity
-        word_count = len(text.split())
+        # Length heuristic: count space-words AND CJK characters (Chinese has no
+        # spaces, so .split() would undercount a long Chinese task to ~1).
+        cjk_chars = len(re.findall(r"[一-鿿]", text))
+        word_count = len(text.split()) + cjk_chars
         if word_count > 100:
             complex_count += 1
 
-        # Multiple sentences often indicate more complex requirements
-        sentence_count = len(re.split(r'[.!?]+', text))
+        # Sentence count across Latin and full-width CJK terminators.
+        sentence_count = len(re.split(r"[.!?。！？]+", text))
         if sentence_count > 5:
             complex_count += 1
 
-        # Decide based on indicators
         if complex_count > simple_count:
             return "powerful"
-        elif simple_count > 0:
+        if simple_count > 0:
             return "fast"
-
-        # Default to fast for short, unclear tasks
+        # Short, unclear -> fast; medium/long unclear -> powerful (use the
+        # stronger tool when in doubt).
         if word_count < 10:
             return "fast"
-
-        # Default to powerful for medium-length tasks without clear indicators
         return "powerful"
 
 
