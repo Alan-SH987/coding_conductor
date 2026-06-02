@@ -538,3 +538,11 @@ def test_enabled_skill_injected_into_system_prompt(repo, tmp_path, monkeypatch):
     prompt = fake.seen_system_prompts[-1]
     assert "Skill: pdf" in prompt
     assert "pdfplumber" in prompt
+
+
+def test_create_task_auto_agent_resolves(client, repo):
+    """'auto' is accepted at the API and resolved to a real adapter (not 400)."""
+    pid = client.post("/projects", json={"name": "p", "path": str(repo)}).json()["id"]
+    r = client.post(f"/projects/{pid}/tasks", json={"title": "do a thing", "agent": "auto"})
+    assert r.status_code == 201
+    assert r.json()["assigned_agent"] != "auto"  # resolved to a registered adapter

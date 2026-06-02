@@ -299,7 +299,9 @@ def create_task(
 ):
     if orch.get_project(project_id) is None:
         raise HTTPException(404, f"project {project_id} not found")
-    if body.agent not in orch.adapters:
+    # "auto" is resolved to a real agent inside create_task (smart routing), so
+    # it's valid here even though it isn't a registered adapter.
+    if body.agent != "auto" and body.agent not in orch.adapters:
         raise HTTPException(400, f"unknown agent {body.agent!r}")
     return orch.create_task(project_id, body.title, body.description, body.agent)
 
