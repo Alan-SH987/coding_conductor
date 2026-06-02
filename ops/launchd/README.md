@@ -11,6 +11,13 @@ or session closes. Installs two macOS **LaunchAgents** (run as you, no root):
 Both have `RunAtLoad` (start at login) and `KeepAlive` (auto-restart on crash),
 so they survive a closed terminal, a crash, and a reboot.
 
+> ⚠️ **Does not work while this repo lives under `~/Desktop`.** macOS TCC blocks
+> LaunchAgents from reading `~/Desktop` (and `~/Documents`, `~/Downloads`), so the
+> agents crash-loop, unable to even open the launcher (`can't open input file`).
+> Use this only after moving the repo off `~/Desktop`, or grant `/bin/zsh` Full
+> Disk Access. For a Desktop repo, prefer the terminal-resident setup in
+> [`../serve/`](../serve/README.md).
+
 ## Use
 
 ```sh
