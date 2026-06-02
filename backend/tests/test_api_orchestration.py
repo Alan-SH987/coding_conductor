@@ -561,7 +561,10 @@ def test_merge_records_handoff_memory(repo, tmp_path):
         async def run(self, spec, ctx):
             yield AgentEvent(EventType.meta, data={"session_id": "x"})
             (Path(ctx.worktree_path) / "feature.txt").write_text("hello\n")
-            yield AgentEvent(EventType.final, text="done", data={"session_id": "x"})
+            yield AgentEvent(
+                EventType.final, text="created feature.txt with a greeting",
+                data={"session_id": "x"},
+            )
 
     db = tmp_path / "handoff.db"
     eng = create_engine(f"sqlite:///{db}", connect_args={"check_same_thread": False})
@@ -577,6 +580,7 @@ def test_merge_records_handoff_memory(repo, tmp_path):
     bundle = memory.build_context_bundle(proj.path)
     assert "add a feature" in bundle
     assert "feature.txt" in bundle
+    assert "created feature.txt with a greeting" in bundle  # agent's exec summary
 
 
 def test_reject_records_handoff_memory(repo, tmp_path):

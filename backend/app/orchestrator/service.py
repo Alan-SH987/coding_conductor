@@ -451,6 +451,26 @@ class Orchestrator:
                     files.append(tail.strip())
         return files
 
+    def _last_agent_message(self, task_id: int) -> str:
+        """The agent's own 'what I did' from the latest run (its final message,
+        else the last message). Reused as the handoff's execution summary — no
+        extra LLM call."""
+        runs = self.list_runs(task_id)
+        if not runs:
+            return ""
+        finals: list[str] = []
+        messages: list[str] = []
+        for e in self.list_events(runs[-1].id):
+            if e.type not in ("final", "message"):
+                continue
+            try:
+                text = (json.loads(e.payload_json).get("text") or "").strip()
+            except (ValueError, TypeError):
+                text = ""
+            if text:
+                (finals if e.type == "final" else messages).append(text)
+        return finals[-1] if finals else (messages[-1] if messages else "")
+
     def _record_handoff(self, task, project, outcome: str = "merged") -> None:
         """Distill a finished task into a shared-memory handoff entry (best-effort).
 
@@ -466,6 +486,9 @@ class Orchestrator:
             if files:
                 shown = ", ".join(files[:10]) + (" …" if len(files) > 10 else "")
                 lines.append(f"- files: {shown}")
+            summary = self._last_agent_message(task.id)
+            if summary:
+                lines.append(f"- summary: {' '.join(summary.split())[:300]}")
             review = self.get_latest_review(task.id)
             if review:
                 summary = " ".join((review.summary or "").split())[:200]
