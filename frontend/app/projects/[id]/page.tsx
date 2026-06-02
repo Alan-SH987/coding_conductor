@@ -58,6 +58,7 @@ export default function ProjectPage({
 
   const esRef = useRef<EventSource | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const isInitialLoad = useRef(true);
 
   async function load(): Promise<Task[]> {
     const [ps, p, t, a] = await Promise.all([
@@ -196,7 +197,13 @@ export default function ProjectPage({
 
   useEffect(() => {
     // Auto-scroll when tasks update or live events change
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    // Use instant scroll on initial load to avoid the scroll animation
+    if (isInitialLoad.current && tasks.length > 0) {
+      bottomRef.current?.scrollIntoView({ behavior: "instant" });
+      isInitialLoad.current = false;
+    } else if (!isInitialLoad.current) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [tasks.length, liveEvents.length]);
 
   async function onSend() {
