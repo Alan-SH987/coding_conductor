@@ -25,9 +25,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -70,6 +72,34 @@ class TaskCreate(BaseModel):
     title: str
     description: str = ""
     agent: str = "claude"
+
+
+class AttachmentOut(BaseModel):
+    filename: str
+    path: str
+    content_type: str
+    size: int
+
+
+_SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
+_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
+
+def _safe_attachment_name(filename: str) -> str:
+    name = Path(filename or "attachment").name.strip()
+    name = _SAFE_FILENAME.sub("_", name).strip("._")
+    return name or "attachment"
+
+
+def _unique_path(directory: Path, filename: str) -> Path:
+    stem = Path(filename).stem or "attachment"
+    suffix = Path(filename).suffix
+    candidate = directory / filename
+    counter = 2
+    while candidate.exists():
+        candidate = directory / f"{stem}-{counter}{suffix}"
+        counter += 1
+    return candidate
 
 
 # ---------- agents ----------
@@ -324,6 +354,58 @@ def create_task(
     if body.agent != "auto" and body.agent not in orch.adapters:
         raise HTTPException(400, f"unknown agent {body.agent!r}")
     return orch.create_task(project_id, body.title, body.description, body.agent)
+
+
+@router.post("/tasks/{task_id}/attachments", response_model=list[AttachmentOut])
+async def upload_task_attachments(
+    task_id: int,
+    files: list[UploadFile] = File(...),
+    orch: Orchestrator = Depends(get_orchestrator),
+):
+    task = orch.get_task(task_id)
+    if task is None:
+        raise HTTPException(404, f"task {task_id} not found")
+    if task.status not in {
+        models.TaskStatus.draft.value,
+        models.TaskStatus.queued.value,
+        models.TaskStatus.failed.value,
+    }:
+        raise HTTPException(409, "attachments can only be added before a run")
+    project = orch.get_project(task.project_id)
+    if project is None:
+        raise HTTPException(404, f"project {task.project_id} not found")
+
+    root = Path(project.path).resolve()
+    dest_dir = root / ".conductor" / "attachments" / f"task-{task_id}"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    saved: list[AttachmentOut] = []
+    for upload in files:
+        filename = _safe_attachment_name(upload.filename or "attachment")
+        dest = _unique_path(dest_dir, filename)
+        size = 0
+        try:
+            with dest.open("wb") as fh:
+                while chunk := await upload.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > _MAX_ATTACHMENT_BYTES:
+                        raise HTTPException(
+                            413,
+                            f"{upload.filename or filename} exceeds 25 MB",
+                        )
+                    fh.write(chunk)
+        except HTTPException:
+            dest.unlink(missing_ok=True)
+            raise
+        finally:
+            await upload.close()
+        saved.append(AttachmentOut(
+            filename=dest.name,
+            path=str(dest.resolve()),
+            content_type=upload.content_type or "application/octet-stream",
+            size=size,
+        ))
+    return saved
 
 
 @router.get("/projects/{project_id}/tasks", response_model=list[models.Task])

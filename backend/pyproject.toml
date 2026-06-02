@@ -5,6 +5,7 @@ description = "Coding Conductor backend — credential-less orchestrator over he
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
+    "python-multipart>=0.0.9",
     "uvicorn[standard]>=0.30",
     "sqlmodel>=0.0.22",
     "pydantic-settings>=2.4",

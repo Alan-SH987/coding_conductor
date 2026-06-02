@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import json
 import tempfile
+from pathlib import Path
 from typing import AsyncIterator, Optional
 
 from .base import (
@@ -101,8 +102,17 @@ class CodexAdapter(AgentAdapter):
         # Fully autonomous within the sandbox: never block on an approval prompt
         # we can't answer in headless mode.
         cmd += ["-c", 'approval_policy="never"']
+        for path in ctx.attachment_paths:
+            if self._is_image_attachment(path):
+                cmd += ["-i", path]
         cmd += [prompt]
         return cmd
+
+    @staticmethod
+    def _is_image_attachment(path: str) -> bool:
+        return Path(path).suffix.lower() in {
+            ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp",
+        }
 
     # ----- execution -----------------------------------------------------
     async def run(self, spec: TaskSpec, ctx: RunContext) -> AsyncIterator[AgentEvent]:

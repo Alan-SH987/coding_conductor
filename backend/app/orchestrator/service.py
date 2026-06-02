@@ -16,6 +16,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shutil
+import subprocess
 import tempfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -373,8 +375,11 @@ class Orchestrator:
         except Exception as exc:
             self._set_failed(task_id, f"worktree setup failed: {exc}")
             raise
+        attachment_paths = self._materialize_attachments(
+            project_path, task_id, handle.path
+        )
 
-        spec = TaskSpec(goal=spec_goal)
+        spec = TaskSpec(goal=self._compose_goal_with_attachments(spec_goal, attachment_paths))
         bundle_parts = [
             memory.build_context_bundle(project_path, query=spec_goal, query_tags=task_tags),
             skills.build_skills_bundle(skills.parse_enabled(enabled_skills)),
@@ -388,6 +393,7 @@ class Orchestrator:
             spec=spec,
             system_prompt="\n\n".join(p for p in bundle_parts if p),
             resume_session_id=resume_session_id,
+            attachment_paths=attachment_paths,
         )
 
     def _prepare_run_handle(
@@ -478,8 +484,15 @@ class Orchestrator:
             task_id=str(task_id), path=worktree_path or "", branch=branch or "",
             base_sha=git.merge_base(branch), created_at="",
         )
-        spec = TaskSpec(goal=spec_goal)
-        ctx = RunContext(worktree_path=worktree_path, system_prompt=system_prompt)
+        attachment_paths = self._materialize_attachments(
+            project_path, task_id, worktree_path or ""
+        )
+        spec = TaskSpec(goal=self._compose_goal_with_attachments(spec_goal, attachment_paths))
+        ctx = RunContext(
+            worktree_path=worktree_path,
+            system_prompt=system_prompt,
+            attachment_paths=attachment_paths,
+        )
         result = await self._drive_run_once(
             task_id, run_id, agent_name, project_path, git, handle, spec, ctx
         )
@@ -497,6 +510,7 @@ class Orchestrator:
         spec: TaskSpec,
         system_prompt: str,
         resume_session_id: Optional[str] = None,
+        attachment_paths: Optional[list[str]] = None,
     ) -> models.Task:
         attempt = 1
         next_resume_session_id = resume_session_id
@@ -507,6 +521,7 @@ class Orchestrator:
                 worktree_path=handle.path,
                 system_prompt=system_prompt,
                 resume_session_id=next_resume_session_id,
+                attachment_paths=attachment_paths or [],
             )
             result = await self._drive_run_once(
                 task_id, run_id, agent_name, project_path, git, handle, spec, ctx
@@ -603,6 +618,71 @@ class Orchestrator:
             error_kind=error_kind,
             session_id=session_id,
         )
+
+    @staticmethod
+    def _source_attachment_paths(project_path: str, task_id: int) -> list[Path]:
+        root = Path(project_path) / ".conductor" / "attachments" / f"task-{task_id}"
+        if not root.exists():
+            return []
+        return [
+            path
+            for path in sorted(root.iterdir())
+            if path.is_file()
+        ]
+
+    def _materialize_attachments(
+        self, project_path: str, task_id: int, worktree_path: str
+    ) -> list[str]:
+        sources = self._source_attachment_paths(project_path, task_id)
+        if not sources or not worktree_path:
+            return []
+        target_dir = Path(worktree_path) / ".conductor" / "attachments" / f"task-{task_id}"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        self._exclude_worktree_attachments(worktree_path)
+        out: list[str] = []
+        for source in sources:
+            target = target_dir / source.name
+            if source.resolve() != target.resolve():
+                shutil.copy2(source, target)
+            out.append(str(target.resolve()))
+        return out
+
+    @staticmethod
+    def _exclude_worktree_attachments(worktree_path: str) -> None:
+        line = ".conductor/attachments/\n"
+        try:
+            proc = subprocess.run(
+                ["git", "rev-parse", "--git-path", "info/exclude"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            exclude = Path(proc.stdout.strip())
+            if not exclude.is_absolute():
+                exclude = Path(worktree_path) / exclude
+            existing = exclude.read_text() if exclude.exists() else ""
+            if line.strip() not in existing.splitlines():
+                exclude.parent.mkdir(parents=True, exist_ok=True)
+                separator = "" if existing.endswith("\n") or not existing else "\n"
+                exclude.write_text(existing + separator + line)
+        except (OSError, subprocess.CalledProcessError):
+            logger.warning("could not update worktree exclude for attachments", exc_info=True)
+
+    @staticmethod
+    def _compose_goal_with_attachments(goal: str, attachment_paths: list[str]) -> str:
+        if not attachment_paths:
+            return goal
+        lines = [
+            goal,
+            "",
+            "Attachments supplied by the user:",
+            *[f"- {path}" for path in attachment_paths],
+            "",
+            "Use these local file paths as direct evidence/context for the task. "
+            "Do not move or delete the attachment files.",
+        ]
+        return "\n".join(lines)
 
     @staticmethod
     def _compose_revision_prompt(summary: str, findings: list[dict]) -> str:

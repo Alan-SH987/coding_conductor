@@ -162,6 +162,13 @@ export interface TaskSuggestion {
   created_at: string;
 }
 
+export interface TaskAttachment {
+  filename: string;
+  path: string;
+  content_type: string;
+  size: number;
+}
+
 // ---------- transport ----------
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -191,6 +198,25 @@ const del = <T>(path: string) =>
 
 const patch = <T>(path: string, body?: unknown) =>
   http<T>(path, { method: "PATCH", body: body ? JSON.stringify(body) : undefined });
+
+async function upload<T>(path: string, formData: FormData): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    body: formData,
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      detail = body.detail ?? body.error ?? detail;
+    } catch {
+      // non-JSON error body; keep statusText
+    }
+    throw new Error(`${res.status}: ${detail}`);
+  }
+  return res.json() as Promise<T>;
+}
 
 // ---------- endpoints ----------
 export const api = {
@@ -233,6 +259,11 @@ export const api = {
     description: string,
     agent: string,
   ) => post<Task>(`/projects/${projectId}/tasks`, { title, description, agent }),
+  uploadTaskAttachments: (taskId: number, files: File[]) => {
+    const formData = new FormData();
+    for (const file of files) formData.append("files", file);
+    return upload<TaskAttachment[]>(`/tasks/${taskId}/attachments`, formData);
+  },
 
   getTask: (id: number) => http<Task>(`/tasks/${id}`),
   runTask: (id: number) => post<Task>(`/tasks/${id}/run`),
