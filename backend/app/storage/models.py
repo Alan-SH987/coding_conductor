@@ -43,6 +43,9 @@ class Project(SQLModel, table=True):
     # Pre-merge gate: a shell command run in the repo working dir against the
     # merged result before a task is committed to main. None = no gate.
     verify_cmd: Optional[str] = None
+    # JSON list of globally-installed skill names enabled for this project; their
+    # instructions are injected into the agent's system prompt. None/[] = none.
+    enabled_skills: Optional[str] = None
 
 
 class Task(SQLModel, table=True):

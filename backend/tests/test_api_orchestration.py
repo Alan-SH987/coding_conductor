@@ -504,3 +504,37 @@ def test_approve_conflict_records_reason(repo, tmp_path):
     t = orch.get_task(task.id)
     assert t.status == "failed"
     assert "merge conflict" in (t.error or "")
+
+
+def test_enabled_skill_injected_into_system_prompt(repo, tmp_path, monkeypatch):
+    """An enabled skill's instructions reach the agent via the system prompt."""
+    import asyncio
+
+    from sqlmodel import SQLModel, create_engine
+
+    from app import skills
+
+    # a global skill store, monkeypatched away from ~/.conductor
+    store = tmp_path / "skills"
+    (store / "pdf").mkdir(parents=True)
+    (store / "pdf" / "SKILL.md").write_text(
+        "---\nname: pdf\ndescription: handle PDFs\n---\nUse pdfplumber to extract text.\n"
+    )
+    monkeypatch.setattr(skills, "SKILLS_DIR", store)
+    assert {s["name"] for s in skills.list_skills()} == {"pdf"}
+
+    db = tmp_path / "skills.db"
+    eng = create_engine(f"sqlite:///{db}", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(eng)
+    fake = FakeAdapter()
+    orch = Orchestrator({"claude": fake}, engine=eng)
+    proj = orch.create_project("p", str(repo))
+    orch.update_project_skills(proj.id, ["pdf"])
+    task = orch.create_task(proj.id, "do a thing")
+
+    asyncio.run(orch.run_task(task.id))
+
+    assert fake.seen_system_prompts, "the adapter should have run"
+    prompt = fake.seen_system_prompts[-1]
+    assert "Skill: pdf" in prompt
+    assert "pdfplumber" in prompt

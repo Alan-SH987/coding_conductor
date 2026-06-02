@@ -15,6 +15,12 @@ export interface Project {
   deleted_at: string | null;
   created_at: string;
   verify_cmd: string | null;
+  enabled_skills: string | null;
+}
+
+export interface Skill {
+  name: string;
+  description: string;
 }
 
 export type TaskStatus =
@@ -183,6 +189,9 @@ export const api = {
   deleteProject: (id: number) => del<Project>(`/projects/${id}`),
   updateProjectVerify: (id: number, verifyCmd: string | null) =>
     patch<Project>(`/projects/${id}/verify`, { verify_cmd: verifyCmd }),
+  listSkills: () => http<Skill[]>("/skills"),
+  updateProjectSkills: (id: number, enabled: string[]) =>
+    patch<Project>(`/projects/${id}/skills`, { enabled }),
 
   listTasks: (projectId: number) =>
     http<Task[]>(`/projects/${projectId}/tasks`),

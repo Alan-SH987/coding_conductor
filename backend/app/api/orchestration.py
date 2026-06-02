@@ -32,6 +32,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app import skills
 from app.api.deps import get_orchestrator
 from app.orchestrator import (
     AlreadyPlanned,
@@ -208,6 +209,29 @@ def update_project_verify(
 ):
     """Set or clear the pre-merge verify command run before a task merges."""
     proj = orch.update_project_verify(project_id, body.verify_cmd)
+    if proj is None:
+        raise HTTPException(404, f"project {project_id} not found")
+    return proj
+
+
+class SkillsUpdate(BaseModel):
+    enabled: list[str] = []
+
+
+@router.get("/skills")
+def list_skills():
+    """All globally-installed skills (~/.conductor/skills/<name>/SKILL.md)."""
+    return skills.list_skills()
+
+
+@router.patch("/projects/{project_id}/skills", response_model=models.Project)
+def update_project_skills(
+    project_id: int,
+    body: SkillsUpdate,
+    orch: Orchestrator = Depends(get_orchestrator),
+):
+    """Set which installed skills are enabled (injected) for this project."""
+    proj = orch.update_project_skills(project_id, body.enabled)
     if proj is None:
         raise HTTPException(404, f"project {project_id} not found")
     return proj

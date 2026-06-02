@@ -12,6 +12,7 @@ import { Button } from "@/components/ui";
 import { ProjectSidebar } from "@/components/chat/ProjectSidebar";
 import { ConversationTurn } from "@/components/chat/ConversationTurn";
 import { AgentsHealth } from "@/components/chat/AgentsHealth";
+import { SkillsControl } from "@/components/chat/SkillsControl";
 import {
   RightPanel,
   type PanelKind,
@@ -273,6 +274,13 @@ export default function ProjectPage({
   // Show every option including "auto" (smart routing). The /agents list puts
   // "auto" first, so it leads the dropdown and is the default.
   const realAgents = agents;
+  const enabledSkills: string[] = (() => {
+    try {
+      return project?.enabled_skills ? JSON.parse(project.enabled_skills) : [];
+    } catch {
+      return [];
+    }
+  })();
 
   return (
     <div className="flex h-[calc(100vh-9rem)] gap-4">
@@ -290,6 +298,11 @@ export default function ProjectPage({
             </h1>
             <div className="ml-auto flex items-center gap-4">
               <AgentsHealth />
+              <SkillsControl
+                projectId={projectId}
+                enabled={enabledSkills}
+                onChanged={load}
+              />
             </div>
             <div className="flex items-center gap-2 text-xs">
               {editingVerify ? (

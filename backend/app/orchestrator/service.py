@@ -23,7 +23,7 @@ from typing import Optional
 
 from sqlmodel import Session, select
 
-from app import memory
+from app import memory, skills
 from app.adapters.base import AgentAdapter, EventType, RunContext, TaskSpec
 from app.gitops import GitOpsEngine, NotAGitRepo
 from app.gitops.models import WorktreeHandle
@@ -261,6 +261,7 @@ class Orchestrator:
             spec_goal = task.description or task.title
             project_path = project.path
             project_id = task.project_id
+            enabled_skills = project.enabled_skills
 
         # Check quota before starting the run
         try:
@@ -289,9 +290,13 @@ class Orchestrator:
 
         run_id = self._create_run(task_id, agent_name)
         spec = TaskSpec(goal=spec_goal)
+        bundle_parts = [
+            memory.build_context_bundle(project_path),
+            skills.build_skills_bundle(skills.parse_enabled(enabled_skills)),
+        ]
         ctx = RunContext(
             worktree_path=handle.path,
-            system_prompt=memory.build_context_bundle(project_path),
+            system_prompt="\n\n".join(p for p in bundle_parts if p),
         )
         return await self._drive_run(
             task_id, run_id, agent_name, project_path, git, handle, spec, ctx
@@ -316,6 +321,7 @@ class Orchestrator:
             project_path = project.path
             worktree_path = task.worktree_path
             branch = task.branch
+            enabled_skills = project.enabled_skills
             review = s.exec(
                 select(models.Review)
                 .where(models.Review.task_id == task_id)
@@ -325,8 +331,12 @@ class Orchestrator:
         summary = review.summary if review else ""
         findings = json.loads(review.findings_json) if review else []
         revision = self._compose_revision_prompt(summary, findings)
-        bundle = memory.build_context_bundle(project_path)
-        system_prompt = f"{bundle}\n\n{revision}" if bundle else revision
+        bundle_parts = [
+            memory.build_context_bundle(project_path),
+            skills.build_skills_bundle(skills.parse_enabled(enabled_skills)),
+            revision,
+        ]
+        system_prompt = "\n\n".join(p for p in bundle_parts if p)
 
         git = GitOpsEngine(project_path)
         handle = WorktreeHandle(
@@ -589,6 +599,20 @@ class Orchestrator:
             if proj is None or proj.deleted_at is not None:
                 return None
             proj.verify_cmd = verify_cmd or None
+            s.add(proj)
+            s.commit()
+            s.refresh(proj)
+            return proj
+
+    def update_project_skills(
+        self, project_id: int, enabled: list[str]
+    ) -> Optional[models.Project]:
+        """Set the list of enabled skill names for a project (stored as JSON)."""
+        with Session(self.engine) as s:
+            proj = s.get(models.Project, project_id)
+            if proj is None or proj.deleted_at is not None:
+                return None
+            proj.enabled_skills = json.dumps([str(x) for x in (enabled or [])])
             s.add(proj)
             s.commit()
             s.refresh(proj)
