@@ -1,9 +1,63 @@
 "use client";
 
 import Link from "next/link";
-import { type Task } from "@/lib/api";
+import { type Task, type Event as ApiEvent } from "@/lib/api";
 import { Badge, Button } from "@/components/ui";
 import type { PanelKind } from "@/components/chat/RightPanel";
+
+// Extract key progress info from live events for inline display
+interface ProgressInfo {
+  currentAction: string | null; // What the agent is doing now
+  toolCalls: number; // Number of tool calls made
+  lastTool: string | null; // Last tool used
+  hasThinking: boolean; // Agent is thinking
+}
+
+function extractProgress(events: ApiEvent[]): ProgressInfo {
+  let currentAction: string | null = null;
+  let toolCalls = 0;
+  let lastTool: string | null = null;
+  let hasThinking = false;
+
+  for (const ev of events) {
+    if (ev.type === "thinking") {
+      hasThinking = true;
+      try {
+        const p = JSON.parse(ev.payload_json);
+        if (p.text) {
+          // Truncate thinking to first line or 60 chars
+          const text = p.text.split("\n")[0];
+          currentAction = text.length > 60 ? text.slice(0, 57) + "..." : text;
+        }
+      } catch {
+        // ignore
+      }
+    } else if (ev.type === "tool_use") {
+      toolCalls++;
+      try {
+        const p = JSON.parse(ev.payload_json);
+        lastTool = p.tool || p.name || null;
+        if (lastTool) {
+          currentAction = `Using ${lastTool}`;
+        }
+      } catch {
+        // ignore
+      }
+    } else if (ev.type === "message") {
+      try {
+        const p = JSON.parse(ev.payload_json);
+        if (p.text) {
+          const text = p.text.split("\n")[0];
+          currentAction = text.length > 80 ? text.slice(0, 77) + "..." : text;
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return { currentAction, toolCalls, lastTool, hasThinking };
+}
 
 function PanelChip({
   label,
@@ -30,13 +84,14 @@ function PanelChip({
 }
 
 // One task rendered as a conversation turn: a right-aligned "user" bubble (the
-// prompt) and a left-aligned "assistant" block (status + inline actions). All
-// verbose output (live stream, activity, diff, review) opens in the right-side
-// drawer via onOpenPanel instead of expanding inline, keeping the column lean.
+// prompt) and a left-aligned "assistant" block (status + inline actions). When
+// streaming, key progress info shows inline so users can see what's happening
+// without opening the right panel.
 export function ConversationTurn({
   task,
   hasChildren,
   streaming,
+  liveEvents,
   busy,
   activeKind,
   onRun,
@@ -48,6 +103,7 @@ export function ConversationTurn({
   task: Task;
   hasChildren: boolean;
   streaming: boolean;
+  liveEvents: ApiEvent[];
   busy: boolean;
   activeKind: PanelKind | null;
   onRun: (id: number) => void;
@@ -56,6 +112,7 @@ export function ConversationTurn({
   onReject: (id: number) => void;
   onOpenPanel: (kind: PanelKind, taskId: number) => void;
 }) {
+  const progress = streaming ? extractProgress(liveEvents) : null;
   const canRun =
     (task.status === "draft" || task.status === "failed") && !hasChildren;
   const atGate = task.status === "awaiting_approval";
@@ -102,6 +159,30 @@ export function ConversationTurn({
             open ↗
           </Link>
         </div>
+
+        {/* Inline progress display when streaming */}
+        {streaming && progress && (
+          <div className="rounded-md border border-green-900/40 bg-green-950/20 px-2.5 py-2 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-green-400" />
+              <span className="text-green-300">
+                {progress.toolCalls > 0
+                  ? `${progress.toolCalls} tool calls`
+                  : "Starting..."}
+              </span>
+              {progress.lastTool && (
+                <span className="font-mono text-zinc-500">
+                  [{progress.lastTool}]
+                </span>
+              )}
+            </div>
+            {progress.currentAction && (
+              <div className="mt-1.5 truncate text-zinc-300">
+                {progress.currentAction}
+              </div>
+            )}
+          </div>
+        )}
 
         {task.status === "failed" && task.error && (
           <div className="rounded-md border border-red-900/60 bg-red-950/30 px-2.5 py-1.5 text-xs">

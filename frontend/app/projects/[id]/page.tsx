@@ -139,7 +139,7 @@ export default function ProjectPage({
         const running = t.find((x) => x.status === "running");
         if (running) {
           openStream(running.id);
-          openPanel("live", running.id);
+          // Don't auto-open the right panel - key progress now shows inline
         }
       } catch (e) {
         if (!cancelled) setError(String(e));
@@ -169,7 +169,7 @@ export default function ProjectPage({
       await load();
       await api.runTask(task.id);
       openStream(task.id);
-      openPanel("live", task.id);
+      // Don't auto-open the right panel - key progress now shows inline
     } catch (e) {
       setError(String(e));
     } finally {
@@ -183,7 +183,7 @@ export default function ProjectPage({
     try {
       await api.runTask(id);
       openStream(id);
-      openPanel("live", id);
+      // Don't auto-open the right panel - key progress now shows inline
     } catch (e) {
       setError(String(e));
     } finally {
@@ -362,6 +362,7 @@ export default function ProjectPage({
                   task={t}
                   hasChildren={childParentIds.has(t.id)}
                   streaming={streamingTaskId === t.id}
+                  liveEvents={streamingTaskId === t.id ? liveEvents : []}
                   busy={busyTaskId === t.id}
                   activeKind={panel?.taskId === t.id ? panel.kind : null}
                   onRun={onRun}
