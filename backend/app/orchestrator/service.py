@@ -253,6 +253,8 @@ class Orchestrator:
         if self._has_children(task_id):
             raise NotRunnable(task_id)
 
+        self.check_quota(task.project_id)
+
         # Check concurrency limit
         status = self.concurrency_limiter.get_status(task.project_id)
         if not status["can_start"]:
@@ -277,6 +279,10 @@ class Orchestrator:
 
     async def _start_from_queue(self, task_id: int) -> models.Task:
         """Callback for queue manager to start a task."""
+        task = self.get_task(task_id)
+        if task is None:
+            raise ValueError(f"task {task_id} not found")
+        self.check_quota(task.project_id)
         return self._start_run_immediate(task_id)
 
     async def _run_guarded(self, task_id: int) -> None:
@@ -321,6 +327,7 @@ class Orchestrator:
             raise ReviseError("no worktree to revise in")
         if self.get_latest_review(task_id) is None:
             raise ReviseError("no review to revise from")
+        self.check_quota(task.project_id)
 
         run_id = self._create_run(task_id, task.assigned_agent)
         self._set_status(task_id, TaskStatus.running)
@@ -943,6 +950,7 @@ class Orchestrator:
                 select(models.Run)
                 .join(models.Task)
                 .where(models.Task.project_id == project_id)
+                .where(models.Run.ended_at.is_not(None))
             ).all()
 
             total_tokens = sum(run.tokens_in + run.tokens_out for run in result)

@@ -6,6 +6,7 @@ import {
   type Agent,
   type Event as ApiEvent,
   type Project,
+  type ProjectUsage,
   type Task,
 } from "@/lib/api";
 import { Button } from "@/components/ui";
@@ -29,6 +30,7 @@ export default function ProjectPage({
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState<Project | null>(null);
+  const [usage, setUsage] = useState<ProjectUsage | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agent, setAgent] = useState("auto");
@@ -52,6 +54,10 @@ export default function ProjectPage({
   const [editingVerify, setEditingVerify] = useState(false);
   const [verifyDraft, setVerifyDraft] = useState("");
   const [savingVerify, setSavingVerify] = useState(false);
+  const [editingBudget, setEditingBudget] = useState(false);
+  const [quotaTokensDraft, setQuotaTokensDraft] = useState("");
+  const [quotaCostDraft, setQuotaCostDraft] = useState("");
+  const [savingBudget, setSavingBudget] = useState(false);
   // Bumped on every reload so the right-side panel re-fetches instead of showing
   // stale diff/review/activity data after a run finishes or a merge lands.
   const [reloadNonce, setReloadNonce] = useState(0);
@@ -61,14 +67,16 @@ export default function ProjectPage({
   const isInitialLoad = useRef(true);
 
   async function load(): Promise<Task[]> {
-    const [ps, p, t, a] = await Promise.all([
+    const [ps, p, u, t, a] = await Promise.all([
       api.listProjects(),
       api.getProject(projectId),
+      api.getProjectUsage(projectId),
       api.listTasks(projectId),
       api.listAgents(),
     ]);
     setProjects(ps);
     setProject(p);
+    setUsage(u);
     setTasks([...t].sort((x, y) => x.id - y.id));
     setAgents(a);
     setReloadNonce((n) => n + 1);
@@ -290,6 +298,45 @@ export default function ProjectPage({
     }
   }
 
+  function parseQuota(value: string, kind: "tokens" | "cost") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed =
+      kind === "tokens"
+        ? Number.parseInt(trimmed, 10)
+        : Number.parseFloat(trimmed);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      throw new Error(
+        kind === "tokens"
+          ? "Token budget must be a non-negative number"
+          : "Cost budget must be a non-negative number",
+      );
+    }
+    return parsed;
+  }
+
+  async function saveBudget() {
+    setSavingBudget(true);
+    setError(null);
+    try {
+      const quotaTokens = parseQuota(quotaTokensDraft, "tokens");
+      const quotaCost = parseQuota(quotaCostDraft, "cost");
+      const updated = await api.updateProjectQuotas(
+        projectId,
+        quotaTokens,
+        quotaCost,
+      );
+      const updatedUsage = await api.getProjectUsage(projectId);
+      setProject(updated);
+      setUsage(updatedUsage);
+      setEditingBudget(false);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingBudget(false);
+    }
+  }
+
   async function onReject(id: number) {
     setError(null);
     setBusyTaskId(id);
@@ -388,6 +435,21 @@ export default function ProjectPage({
     });
   }
 
+  const tokenPercent = usage?.usage_percentage.tokens ?? null;
+  const costPercent = usage?.usage_percentage.cost ?? null;
+  const budgetBarPercent = Math.min(
+    100,
+    Math.max(0, tokenPercent ?? 0, costPercent ?? 0),
+  );
+  const budgetWarning =
+    (tokenPercent != null && tokenPercent >= 90) ||
+    (costPercent != null && costPercent >= 90);
+  const budgetOver =
+    (tokenPercent != null && tokenPercent >= 100) ||
+    (costPercent != null && costPercent >= 100);
+  const formatTokens = (value: number) => value.toLocaleString();
+  const formatCost = (value: number) => `$${value.toFixed(4)}`;
+
   return (
     <div className="flex h-[calc(100vh-9rem)] gap-4">
       <ProjectSidebar
@@ -453,6 +515,92 @@ export default function ProjectPage({
                 </button>
               )}
             </div>
+          </div>
+
+          <div className="mb-2 rounded-md border border-border bg-card/40 px-3 py-2 text-xs">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="font-medium text-foreground">Budget</span>
+              {usage && (
+                <>
+                  <span className="text-muted-foreground">
+                    {formatTokens(usage.usage.total_tokens)} tokens
+                    {usage.quotas.quota_tokens != null
+                      ? ` / ${formatTokens(usage.quotas.quota_tokens)}`
+                      : " / unlimited"}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {formatCost(usage.usage.total_cost_usd)}
+                    {usage.quotas.quota_cost_usd != null
+                      ? ` / $${usage.quotas.quota_cost_usd.toFixed(2)}`
+                      : " / unlimited"}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {usage.usage.run_count} completed runs
+                  </span>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setQuotaTokensDraft(project?.quota_tokens?.toString() ?? "");
+                  setQuotaCostDraft(project?.quota_cost_usd?.toString() ?? "");
+                  setEditingBudget(true);
+                }}
+                className="ml-auto text-muted-foreground hover:text-foreground"
+              >
+                Edit
+              </button>
+            </div>
+            {(usage?.quotas.quota_tokens != null ||
+              usage?.quotas.quota_cost_usd != null) && (
+              <div className="mt-2 h-1.5 overflow-hidden rounded bg-muted">
+                <div
+                  className={`h-full rounded ${
+                    budgetOver
+                      ? "bg-red-500"
+                      : budgetWarning
+                        ? "bg-amber-500"
+                        : "bg-green-500"
+                  }`}
+                  style={{ width: `${budgetBarPercent}%` }}
+                />
+              </div>
+            )}
+            {editingBudget && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <input
+                  value={quotaTokensDraft}
+                  onChange={(e) => setQuotaTokensDraft(e.target.value)}
+                  placeholder="Token budget"
+                  inputMode="numeric"
+                  className="w-36 rounded-md border border-border bg-background px-2 py-1 outline-none focus:border-ring"
+                />
+                <input
+                  value={quotaCostDraft}
+                  onChange={(e) => setQuotaCostDraft(e.target.value)}
+                  placeholder="Cost budget USD"
+                  inputMode="decimal"
+                  className="w-36 rounded-md border border-border bg-background px-2 py-1 outline-none focus:border-ring"
+                />
+                <Button
+                  onClick={saveBudget}
+                  disabled={savingBudget}
+                  className="px-2 py-1"
+                >
+                  {savingBudget ? "Saving…" : "Save"}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setEditingBudget(false)}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  Cancel
+                </button>
+                <span className="text-muted-foreground">
+                  Leave blank for unlimited.
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Tag filter bar */}

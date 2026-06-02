@@ -1,10 +1,16 @@
 """Tests for project quota management."""
 
+from datetime import datetime, timezone
+
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.orchestrator import Orchestrator, QuotaExceeded
 from app.storage import models
+
+
+def _ended_at():
+    return datetime.now(timezone.utc)
 
 
 @pytest.fixture
@@ -97,6 +103,7 @@ def test_quota_exceeded_tokens(orch, engine, project, task):
             tokens_in=50,
             tokens_out=60,  # Total: 110 > 100
             cost=0.0,
+            ended_at=_ended_at(),
         )
         s.add(run)
         s.commit()
@@ -121,6 +128,7 @@ def test_quota_exceeded_cost(orch, engine, project, task):
             tokens_in=100,
             tokens_out=100,
             cost=1.5,  # > 1.0
+            ended_at=_ended_at(),
         )
         s.add(run)
         s.commit()
@@ -145,6 +153,7 @@ def test_quota_not_exceeded(orch, engine, project, task):
             tokens_in=100,
             tokens_out=100,
             cost=0.5,
+            ended_at=_ended_at(),
         )
         s.add(run)
         s.commit()
@@ -165,6 +174,7 @@ def test_get_project_usage_with_runs(orch, engine, project, task):
                 tokens_in=100,
                 tokens_out=50,
                 cost=0.25,
+                ended_at=_ended_at(),
             )
             s.add(run)
         s.commit()
@@ -173,3 +183,24 @@ def test_get_project_usage_with_runs(orch, engine, project, task):
     assert usage["total_tokens"] == 450  # (100 + 50) * 3
     assert usage["total_cost_usd"] == 0.75  # 0.25 * 3
     assert usage["run_count"] == 3
+
+
+def test_get_project_usage_ignores_running_runs(orch, engine, project, task):
+    """In-progress runs should not count toward completed project usage."""
+    with Session(engine) as s:
+        s.add(
+            models.Run(
+                task_id=task.id,
+                agent="test",
+                status="running",
+                tokens_in=100,
+                tokens_out=50,
+                cost=0.25,
+            )
+        )
+        s.commit()
+
+    usage = orch.get_project_usage(project.id)
+    assert usage["total_tokens"] == 0
+    assert usage["total_cost_usd"] == 0
+    assert usage["run_count"] == 0
