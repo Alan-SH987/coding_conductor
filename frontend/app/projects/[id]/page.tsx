@@ -77,6 +77,8 @@ export default function ProjectPage({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const attachmentsRef = useRef<PendingAttachment[]>([]);
   const isInitialLoad = useRef(true);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounterRef = useRef(0);
 
   async function load(): Promise<Task[]> {
     const [ps, p, u, t, a] = await Promise.all([
@@ -251,6 +253,39 @@ export default function ProjectPage({
           : null,
       })),
     ]);
+  }
+
+  function handleDragEnter(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current++;
+    if (e.dataTransfer.types.includes("Files")) {
+      setIsDragging(true);
+    }
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current--;
+    if (dragCounterRef.current === 0) {
+      setIsDragging(false);
+    }
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDragging(false);
+    if (e.dataTransfer.files.length > 0) {
+      addAttachments(e.dataTransfer.files);
+    }
   }
 
   function removeAttachment(id: string) {
@@ -790,7 +825,24 @@ export default function ProjectPage({
             </div>
           )}
 
-          <div className="mt-2 flex items-end gap-2">
+          <div
+            className={`relative mt-2 flex items-end gap-2 rounded-lg border-2 p-2 transition-colors ${
+              isDragging
+                ? "border-dashed border-blue-500 bg-blue-500/10"
+                : "border-transparent"
+            }`}
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+          >
+            {isDragging && (
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-blue-500/10">
+                <span className="text-lg font-medium text-blue-400">
+                  Drop files here to attach
+                </span>
+              </div>
+            )}
             <div className="flex flex-1 flex-col gap-2">
               {attachments.length > 0 && (
                 <div className="flex flex-wrap gap-2">
@@ -846,7 +898,7 @@ export default function ProjectPage({
                   }
                 }}
                 rows={2}
-                placeholder="Describe a task…  (Enter to send, Shift+Enter for newline)"
+                placeholder="Describe a task… (drop files here, Enter to send)"
                 className="resize-none rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-ring"
               />
             </div>
@@ -864,7 +916,7 @@ export default function ProjectPage({
               type="button"
               onClick={() => fileInputRef.current?.click()}
               className="px-3"
-              title="Attach files or screenshots"
+              title="Attach files or screenshots (or drag & drop)"
             >
               Attach
             </Button>
