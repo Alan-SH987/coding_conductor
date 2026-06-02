@@ -56,33 +56,36 @@ backend/
 
 ### 1.2 任务队列和并发控制
 
-**当前状态**: 多任务并发是手动管理，无队列系统
+**当前状态**: ✅ 已完成
 
 **改进内容**:
 
 | 功能 | 描述 | 优先级 |
 |-----|------|-------|
-| 任务队列 | FIFO 或优先级队列 | P0 |
-| 并发限制 | 项目级/全局级并发上限 | P0 |
-| 资源保护 | 防止同时运行过多任务导致系统过载 | P1 |
+| 任务队列 | FIFO 或优先级队列 | ✅ 已完成 |
+| 并发限制 | 项目级/全局级并发上限 | ✅ 已完成 |
+| 资源保护 | 防止同时运行过多任务导致系统过载 | ✅ 已完成 |
 | 队列可视化 | 显示队列状态和等待任务 | P1 |
 
-**数据模型**:
-```python
-class TaskQueue:
-    id: int
-    project_id: int
-    max_concurrent: int = 3
-    priority_mode: str = "fifo"  # fifo | priority | smart
-
-class QueueEntry:
-    id: int
-    queue_id: int
-    task_id: int
-    priority: int = 0
-    enqueued_at: datetime
-    started_at: datetime | None
+**实现文件**:
 ```
+backend/app/storage/models.py          # QueueEntry, ConcurrencyConfig, QueuePriority
+backend/app/orchestrator/queue_manager.py      # TaskQueueManager
+backend/app/orchestrator/concurrency_limiter.py # ConcurrencyLimiter
+backend/app/orchestrator/service.py            # 集成到 Orchestrator
+backend/app/api/orchestration.py               # REST API 端点
+backend/tests/test_queue_manager.py            # 单元测试
+```
+
+**API 端点**:
+- `GET /projects/{id}/queue` - 获取队列状态
+- `GET /projects/{id}/queue/tasks` - 列出队列中的任务
+- `POST /tasks/{id}/enqueue` - 将任务加入队列
+- `POST /tasks/{id}/dequeue` - 从队列移除任务
+- `PATCH /tasks/{id}/priority` - 更新任务优先级
+- `GET /projects/{id}/concurrency` - 获取并发配置
+- `PATCH /projects/{id}/concurrency` - 更新并发配置
+- `POST /projects/{id}/queue/process` - 手动触发队列处理
 
 **预期收益**: 系统稳定性提升，资源利用更合理
 

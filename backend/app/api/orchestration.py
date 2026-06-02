@@ -44,6 +44,9 @@ from app.orchestrator import (
     ReviewError,
     ReviseError,
 )
+from app.orchestrator.concurrency_limiter import ConcurrencyLimitReached
+from app.orchestrator.queue_manager import QueueFull, TaskAlreadyQueued
+from app.storage.models import QueuePriority
 from app.orchestrator.model_router import ModelRouter
 from app.storage import models
 
@@ -338,27 +341,49 @@ def get_task(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
     return task
 
 
+class RunTaskRequest(BaseModel):
+    priority: str = QueuePriority.normal.value
+    enqueue_if_busy: bool = True  # If True, queue when concurrency limit reached
+
+
 @router.post("/tasks/{task_id}/run", response_model=models.Task, status_code=202)
-async def run_task(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
+async def run_task(
+    task_id: int,
+    body: Optional[RunTaskRequest] = None,
+    orch: Orchestrator = Depends(get_orchestrator),
+):
     """Kick off the agent in the background and return immediately (202).
 
     The task transitions to ``running`` at once; subscribe to
     ``GET /tasks/{id}/stream`` for live events, or poll ``GET /tasks/{id}``.
+
+    If concurrency limit is reached and enqueue_if_busy is True (default),
+    the task will be queued instead (status becomes ``queued``).
     """
     task = orch.get_task(task_id)
     if task is None:
         raise HTTPException(404, f"task {task_id} not found")
     if task.assigned_agent not in orch.adapters:
         raise HTTPException(400, f"unknown agent {task.assigned_agent!r}")
+
+    priority = body.priority if body else QueuePriority.normal.value
+    enqueue_if_busy = body.enqueue_if_busy if body else True
+
     try:
-        return orch.start_run(task_id)
+        return orch.start_run(task_id, priority=priority, enqueue_if_busy=enqueue_if_busy)
     except AlreadyRunning:
         raise HTTPException(409, f"task {task_id} is already running")
+    except TaskAlreadyQueued:
+        raise HTTPException(409, f"task {task_id} is already in queue")
     except NotRunnable:
         raise HTTPException(
             409, f"task {task_id} is a planned container; run its subtasks instead"
         )
     except QuotaExceeded as e:
+        raise HTTPException(429, str(e))
+    except QueueFull as e:
+        raise HTTPException(429, f"Queue full: {e}")
+    except ConcurrencyLimitReached as e:
         raise HTTPException(429, str(e))
 
 
@@ -661,3 +686,142 @@ def get_merge_strategy(task_id: int, orch: Orchestrator = Depends(get_orchestrat
         return orch.get_merge_strategy(task_id)
     except ValueError as e:
         raise HTTPException(404, str(e))
+
+
+# ---------- queue management ----------
+
+@router.get("/projects/{project_id}/queue")
+def get_queue_status(project_id: int, orch: Orchestrator = Depends(get_orchestrator)):
+    """Get queue and concurrency status for a project.
+
+    Returns:
+        {
+            "project_id": int,
+            "queued": int,          # Tasks waiting in queue
+            "running": int,         # Tasks currently running
+            "max_concurrent": int,  # Concurrency limit
+            "max_queued": int,      # Queue capacity
+            "priority_mode": str,   # "fifo" or "priority"
+            "can_start_more": bool, # Whether more tasks can start
+            "queue_full": bool,     # Whether queue is at capacity
+        }
+    """
+    return orch.get_queue_status(project_id)
+
+
+@router.get("/projects/{project_id}/queue/tasks")
+def list_queued_tasks(project_id: int, orch: Orchestrator = Depends(get_orchestrator)):
+    """List all tasks waiting in queue for a project."""
+    return orch.list_queued_tasks(project_id)
+
+
+class EnqueueRequest(BaseModel):
+    priority: str = QueuePriority.normal.value
+
+
+@router.post("/tasks/{task_id}/enqueue", response_model=models.Task)
+def enqueue_task(
+    task_id: int,
+    body: EnqueueRequest = EnqueueRequest(),
+    orch: Orchestrator = Depends(get_orchestrator),
+):
+    """Add a task to the queue without starting immediately.
+
+    Useful for batch scheduling or when you want explicit queue control.
+    """
+    try:
+        return orch.enqueue_task(task_id, body.priority)
+    except TaskAlreadyQueued:
+        raise HTTPException(409, f"task {task_id} is already in queue")
+    except QueueFull as e:
+        raise HTTPException(429, str(e))
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.post("/tasks/{task_id}/dequeue", response_model=models.Task)
+def dequeue_task(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
+    """Remove a task from queue without running it.
+
+    The task returns to draft status.
+    """
+    return orch.cancel_queued_task(task_id)
+
+
+class UpdatePriorityRequest(BaseModel):
+    priority: str
+
+
+@router.patch("/tasks/{task_id}/priority")
+def update_task_priority(
+    task_id: int,
+    body: UpdatePriorityRequest,
+    orch: Orchestrator = Depends(get_orchestrator),
+):
+    """Update the priority of a queued task.
+
+    Valid priorities: low, normal, high, urgent
+    """
+    if body.priority not in [p.value for p in QueuePriority]:
+        raise HTTPException(400, f"Invalid priority: {body.priority}")
+    entry = orch.update_queue_priority(task_id, body.priority)
+    if entry is None:
+        raise HTTPException(404, f"task {task_id} is not in queue")
+    return entry
+
+
+@router.get("/projects/{project_id}/concurrency")
+def get_concurrency_config(
+    project_id: int,
+    orch: Orchestrator = Depends(get_orchestrator),
+):
+    """Get concurrency configuration for a project."""
+    return orch.get_concurrency_config(project_id)
+
+
+class ConcurrencyConfigUpdate(BaseModel):
+    max_concurrent: Optional[int] = None
+    max_queued: Optional[int] = None
+    priority_mode: Optional[str] = None
+
+
+@router.patch("/projects/{project_id}/concurrency")
+def update_concurrency_config(
+    project_id: int,
+    body: ConcurrencyConfigUpdate,
+    orch: Orchestrator = Depends(get_orchestrator),
+):
+    """Update concurrency configuration for a project.
+
+    Args:
+        max_concurrent: Maximum tasks running at once (1-10)
+        max_queued: Maximum tasks waiting in queue (1-100)
+        priority_mode: "fifo" or "priority"
+    """
+    if body.max_concurrent is not None and not (1 <= body.max_concurrent <= 10):
+        raise HTTPException(400, "max_concurrent must be between 1 and 10")
+    if body.max_queued is not None and not (1 <= body.max_queued <= 100):
+        raise HTTPException(400, "max_queued must be between 1 and 100")
+    if body.priority_mode is not None and body.priority_mode not in ("fifo", "priority"):
+        raise HTTPException(400, "priority_mode must be 'fifo' or 'priority'")
+
+    return orch.update_concurrency_config(
+        project_id,
+        body.max_concurrent,
+        body.max_queued,
+        body.priority_mode,
+    )
+
+
+@router.post("/projects/{project_id}/queue/process")
+async def process_queue(
+    project_id: int,
+    orch: Orchestrator = Depends(get_orchestrator),
+):
+    """Manually trigger queue processing for a project.
+
+    Starts queued tasks up to the concurrency limit.
+    Returns the number of tasks started.
+    """
+    started = await orch.process_queue(project_id)
+    return {"started": started}
