@@ -286,8 +286,54 @@ def _retrieve_handoffs_from_file(
     return relevant or [entry.text for entry in entries[-k:]]
 
 
+class SourceTaskContext:
+    """Context from a source (provenance) task to inject into derived tasks."""
+
+    def __init__(
+        self,
+        source_task_id: int,
+        title: str,
+        description: str,
+        handoff_summary: str,
+        files_changed: list[str],
+    ):
+        self.source_task_id = source_task_id
+        self.title = title
+        self.description = description
+        self.handoff_summary = handoff_summary
+        self.files_changed = files_changed
+
+    def to_prompt(self) -> str:
+        """Format source task context for injection into the system prompt."""
+        lines = [
+            f"## Source Task Context (task-{self.source_task_id})",
+            "",
+            "This task was created based on a prior task. Here is the full context "
+            "from that task so you understand what was already done and what remains:",
+            "",
+            f"### Original Task: {self.title}",
+        ]
+        if self.description:
+            lines.append(f"\n**Description:**\n{self.description}")
+        if self.handoff_summary:
+            lines.append(f"\n**What was done:**\n{self.handoff_summary}")
+        if self.files_changed:
+            shown = ", ".join(self.files_changed[:15])
+            if len(self.files_changed) > 15:
+                shown += f" ... (+{len(self.files_changed) - 15} more)"
+            lines.append(f"\n**Files changed:** {shown}")
+        lines.append(
+            "\n**Your task:** Compare the original task's description/goals with "
+            "what was already done, and complete whatever remains or was requested."
+        )
+        return "\n".join(lines)
+
+
 def build_context_bundle(
-    repo_path: str | Path, query: str = "", query_tags: list[str] | None = None
+    repo_path: str | Path,
+    query: str = "",
+    query_tags: list[str] | None = None,
+    source_task_context: SourceTaskContext | None = None,
 ) -> str:
     """Return shared memory to inject as system prompt, or '' if none.
 
@@ -297,6 +343,9 @@ def build_context_bundle(
 
     If ``query_tags`` are provided (e.g., ["#auth", "#api"]), handoff entries
     with matching tags will be weighted higher during retrieval.
+
+    If ``source_task_context`` is provided, the source task's full context is
+    injected so the agent knows what was already done in the prior task.
     """
     mem = memory_dir(repo_path)
     parts: list[str] = []
@@ -312,6 +361,10 @@ def build_context_bundle(
         c = insights.read_text().strip()
         if c:
             parts.append(c)
+
+    # Inject source task context if available (provenance-based retrieval)
+    if source_task_context:
+        parts.append(source_task_context.to_prompt())
 
     handoff = mem / "handoff.md"
     if handoff.exists():

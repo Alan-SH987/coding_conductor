@@ -67,6 +67,10 @@ export default function ProjectPage({
   // Bumped on every reload so the right-side panel re-fetches instead of showing
   // stale diff/review/activity data after a run finishes or a merge lands.
   const [reloadNonce, setReloadNonce] = useState(0);
+  // Follow-up task creation modal
+  const [followUpSourceId, setFollowUpSourceId] = useState<number | null>(null);
+  const [followUpTitle, setFollowUpTitle] = useState("");
+  const [creatingFollowUp, setCreatingFollowUp] = useState(false);
 
   const esRef = useRef<EventSource | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -433,6 +437,37 @@ export default function ProjectPage({
     }
   }
 
+  function openFollowUpModal(sourceTaskId: number) {
+    const sourceTask = tasks.find((t) => t.id === sourceTaskId);
+    setFollowUpSourceId(sourceTaskId);
+    setFollowUpTitle(sourceTask ? `Follow-up to: ${sourceTask.title}` : "");
+  }
+
+  async function createFollowUp() {
+    if (!followUpSourceId || !followUpTitle.trim()) return;
+    setCreatingFollowUp(true);
+    setError(null);
+    try {
+      const task = await api.createTask(
+        projectId,
+        followUpTitle.trim(),
+        "",
+        agent,
+        followUpSourceId,
+      );
+      setFollowUpSourceId(null);
+      setFollowUpTitle("");
+      await load();
+      // Optionally auto-run the new task
+      await api.runTask(task.id);
+      openStream(task.id);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setCreatingFollowUp(false);
+    }
+  }
+
   async function onReview(id: number) {
     setError(null);
     setBusyTaskId(id);
@@ -725,6 +760,7 @@ export default function ProjectPage({
                   onReject={onReject}
                   onOpenPanel={openPanel}
                   onStop={onStop}
+                  onCreateFollowUp={openFollowUpModal}
                 />
               ))
             )}
@@ -861,6 +897,57 @@ export default function ProjectPage({
           onClose={() => setPanel(null)}
         />
       </div>
+
+      {/* Follow-up task creation modal */}
+      {followUpSourceId !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-full max-w-lg rounded-lg border border-border bg-card p-4 shadow-xl">
+            <h2 className="mb-3 text-lg font-semibold text-foreground">
+              Create Follow-up Task
+            </h2>
+            <p className="mb-3 text-sm text-muted-foreground">
+              This task will inherit context from task #{followUpSourceId}, so the
+              agent will know what was already done and can continue from there.
+            </p>
+            <textarea
+              value={followUpTitle}
+              onChange={(e) => setFollowUpTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  createFollowUp();
+                }
+                if (e.key === "Escape") {
+                  setFollowUpSourceId(null);
+                  setFollowUpTitle("");
+                }
+              }}
+              rows={3}
+              placeholder="What should the agent do next?"
+              className="mb-3 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setFollowUpSourceId(null);
+                  setFollowUpTitle("");
+                }}
+                disabled={creatingFollowUp}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={createFollowUp}
+                disabled={creatingFollowUp || !followUpTitle.trim()}
+              >
+                {creatingFollowUp ? "Creating…" : "Create & Run"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -108,6 +108,7 @@ export function ConversationTurn({
   onReject,
   onOpenPanel,
   onStop,
+  onCreateFollowUp,
 }: {
   task: Task;
   hasChildren: boolean;
@@ -122,6 +123,7 @@ export function ConversationTurn({
   onReject: (id: number) => void;
   onOpenPanel: (kind: PanelKind, taskId: number) => void;
   onStop?: (id: number) => void;
+  onCreateFollowUp?: (sourceTaskId: number) => void;
 }) {
   const progress = streaming ? extractProgress(liveEvents) : null;
   const canRun =
@@ -325,6 +327,17 @@ export function ConversationTurn({
                 active={activeKind === "review"}
                 onClick={() => onOpenPanel("review", task.id)}
               />
+            )}
+            {/* Show "Create follow-up" for merged/completed tasks */}
+            {onCreateFollowUp && task.status === "merged" && (
+              <button
+                type="button"
+                onClick={() => onCreateFollowUp(task.id)}
+                className="rounded-md border border-blue-800/60 bg-blue-950/30 px-2 py-1 text-xs text-blue-300 transition-colors hover:border-blue-700 hover:bg-blue-900/40"
+                title="Create a new task based on this one (inherits context)"
+              >
+                + Follow-up
+              </button>
             )}
           </div>
         )}
