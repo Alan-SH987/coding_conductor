@@ -61,6 +61,9 @@ class Task(SQLModel, table=True):
     # Why the most recent run failed (cleared when a new run starts). Surfaced in
     # the UI so a failed task is never a silent black box.
     error: Optional[str] = None
+    # JSON array of tags, e.g. ["#auth", "#backend", "#python"]
+    # Auto-extracted from title/description or set manually.
+    tags: Optional[str] = None
     deleted_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

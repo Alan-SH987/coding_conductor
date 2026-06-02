@@ -263,6 +263,7 @@ class Orchestrator:
             project_path = project.path
             project_id = task.project_id
             enabled_skills = project.enabled_skills
+            task_tags = json.loads(task.tags) if task.tags else None
 
         # Check quota before starting the run
         try:
@@ -292,7 +293,7 @@ class Orchestrator:
         run_id = self._create_run(task_id, agent_name)
         spec = TaskSpec(goal=spec_goal)
         bundle_parts = [
-            memory.build_context_bundle(project_path, query=spec_goal),
+            memory.build_context_bundle(project_path, query=spec_goal, query_tags=task_tags),
             skills.build_skills_bundle(skills.parse_enabled(enabled_skills)),
         ]
         ctx = RunContext(
@@ -323,6 +324,7 @@ class Orchestrator:
             worktree_path = task.worktree_path
             branch = task.branch
             enabled_skills = project.enabled_skills
+            task_tags = json.loads(task.tags) if task.tags else None
             review = s.exec(
                 select(models.Review)
                 .where(models.Review.task_id == task_id)
@@ -333,7 +335,7 @@ class Orchestrator:
         findings = json.loads(review.findings_json) if review else []
         revision = self._compose_revision_prompt(summary, findings)
         bundle_parts = [
-            memory.build_context_bundle(project_path, query=spec_goal),
+            memory.build_context_bundle(project_path, query=spec_goal, query_tags=task_tags),
             skills.build_skills_bundle(skills.parse_enabled(enabled_skills)),
             revision,
         ]
@@ -476,9 +478,9 @@ class Orchestrator:
         """Distill a finished task into a shared-memory handoff entry (best-effort).
 
         Write side of the memory loop: cheap/deterministic (no extra LLM call) —
-        title + changed files + the existing AI review. ``outcome`` is "merged" or
-        "rejected"; rejected entries also list the review findings so future runs
-        learn what to avoid.
+        title + changed files + the existing AI review + auto-extracted tags.
+        ``outcome`` is "merged" or "rejected"; rejected entries also list the
+        review findings so future runs learn what to avoid.
         """
         try:
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -487,6 +489,15 @@ class Orchestrator:
             if files:
                 shown = ", ".join(files[:10]) + (" …" if len(files) > 10 else "")
                 lines.append(f"- files: {shown}")
+
+            # Extract tags from title, description, and changed files
+            tags = memory.extract_tags(task.title, task.description or "", files)
+            if tags:
+                lines.append(f"- tags: {', '.join(tags)}")
+                # Update task.tags in database if not already set
+                if not task.tags:
+                    self._update_task(task.id, tags=json.dumps(tags))
+
             summary = self._last_agent_message(task.id)
             if summary:
                 lines.append(f"- summary: {' '.join(summary.split())[:300]}")

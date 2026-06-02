@@ -38,6 +38,8 @@ export default function ProjectPage({
   const [busyTaskId, setBusyTaskId] = useState<number | null>(null);
   const [streamingTaskId, setStreamingTaskId] = useState<number | null>(null);
   const [liveEvents, setLiveEvents] = useState<ApiEvent[]>([]);
+  // Tag filtering state
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
   // Which verbose view (if any) is open in the right-side drawer.
   const [panel, setPanel] = useState<PanelState | null>(null);
   // Pre-merge verify gate: output of the last failed approve + the inline editor
@@ -283,6 +285,46 @@ export default function ProjectPage({
     }
   })();
 
+  // Collect all unique tags from tasks
+  const allTags = Array.from(
+    new Set(
+      tasks.flatMap((t) => {
+        if (!t.tags) return [];
+        try {
+          return JSON.parse(t.tags) as string[];
+        } catch {
+          return [];
+        }
+      }),
+    ),
+  ).sort();
+
+  // Filter tasks by selected tags
+  const filteredTasks =
+    selectedTags.size === 0
+      ? tasks
+      : tasks.filter((t) => {
+          if (!t.tags) return false;
+          try {
+            const taskTags = new Set(JSON.parse(t.tags) as string[]);
+            return Array.from(selectedTags).some((tag) => taskTags.has(tag));
+          } catch {
+            return false;
+          }
+        });
+
+  function toggleTag(tag: string) {
+    setSelectedTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(tag)) {
+        next.delete(tag);
+      } else {
+        next.add(tag);
+      }
+      return next;
+    });
+  }
+
   return (
     <div className="flex h-[calc(100vh-9rem)] gap-4">
       <ProjectSidebar
@@ -350,13 +392,47 @@ export default function ProjectPage({
             </div>
           </div>
 
+          {/* Tag filter bar */}
+          {allTags.length > 0 && (
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-zinc-500">Filter by tag:</span>
+              {allTags.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => toggleTag(tag)}
+                  className={`rounded-md border px-2 py-0.5 text-xs transition-colors ${
+                    selectedTags.has(tag)
+                      ? "border-blue-600 bg-blue-950/60 text-blue-300"
+                      : "border-zinc-700 bg-zinc-900/40 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300"
+                  }`}
+                >
+                  {tag}
+                </button>
+              ))}
+              {selectedTags.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedTags(new Set())}
+                  className="text-xs text-zinc-500 hover:text-zinc-300"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
+
           <div className="flex-1 space-y-4 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
             {tasks.length === 0 ? (
               <p className="text-sm text-zinc-500">
                 No tasks yet. Send a message below to create one.
               </p>
+            ) : filteredTasks.length === 0 ? (
+              <p className="text-sm text-zinc-500">
+                No tasks match the selected tags.
+              </p>
             ) : (
-              tasks.map((t) => (
+              filteredTasks.map((t) => (
                 <ConversationTurn
                   key={`${t.id}:${reloadNonce}`}
                   task={t}
