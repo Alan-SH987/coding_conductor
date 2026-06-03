@@ -140,3 +140,24 @@ def test_full_cycle_diff_and_merge(repo):
 
     e.remove_worktree(h)
     assert not Path(h.path).exists()
+
+
+def test_link_deps_into_worktree_links_only_ignored_dirs(repo):
+    """link_deps symlinks git-ignored dep dirs into the worktree (so a verify can
+    run there), and skips non-ignored ones so the symlink can't leak into a diff."""
+    e = GitOpsEngine(repo)
+    (repo / ".gitignore").write_text("node_modules/\n")  # node_modules ignored; venv NOT
+    _run(["git", "add", "-A"], repo)
+    _run(["git", "commit", "-m", "ignore node_modules"], repo)
+    (repo / "node_modules").mkdir()
+    (repo / "node_modules" / "pkg.txt").write_text("dep\n")
+    (repo / "venv").mkdir()
+    (repo / "venv" / "x.txt").write_text("y\n")
+
+    h = e.create_worktree("1")
+    linked = e.link_deps_into_worktree(h.path)
+
+    assert linked == ["node_modules"]  # only the ignored dep dir
+    nm = Path(h.path) / "node_modules"
+    assert nm.is_symlink() and (nm / "pkg.txt").exists()  # resolves to main's deps
+    assert not (Path(h.path) / "venv").exists()  # non-ignored skipped (no diff leak)

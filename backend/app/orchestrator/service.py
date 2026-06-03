@@ -466,7 +466,9 @@ class Orchestrator:
         )
         return handle, None
 
-    async def revise_task(self, task_id: int, run_id: int) -> models.Task:
+    async def revise_task(
+        self, task_id: int, run_id: int, revision_override: Optional[str] = None
+    ) -> models.Task:
         """Re-run the agent in the task's existing worktree to address review.
 
         Reuses the worktree/branch (its prior edits are still on disk, so the
@@ -495,7 +497,7 @@ class Orchestrator:
 
         summary = review.summary if review else ""
         findings = json.loads(review.findings_json) if review else []
-        revision = self._compose_revision_prompt(summary, findings)
+        revision = revision_override or self._compose_revision_prompt(summary, findings)
         bundle_parts = [
             memory.build_context_bundle(project_path, query=spec_goal, query_tags=task_tags),
             skills.build_skills_bundle(skills.parse_enabled(enabled_skills)),
@@ -644,13 +646,12 @@ class Orchestrator:
         )
 
     async def _auto_heal(self, task_id: int) -> None:
-        """Self-review-and-revise loop after a successful run, before the gate.
+        """Self-heal after a successful run, before the human gate.
 
-        Reuses review_task (an AI verdict on the captured diff) and revise_task
-        (re-run in the same worktree to address it): review -> if request_changes,
-        revise -> re-review, bounded by the project's auto_heal_rounds. Pure (works
-        off the diff — no deps, never touches main) and best-effort: any failure
-        just stops. Never merges; the human still gates the result, and the task is
+        Uses the hardest signal available: the project's verify_cmd if set (run the
+        real tests/build in the worktree — see _heal_via_verify), otherwise an AI
+        self-review of the diff (_heal_via_review). Bounded by auto_heal_rounds,
+        best-effort, and it NEVER merges — the human still gates, and the task is
         never left worse than awaiting_approval.
         """
         task = self.get_task(task_id)
@@ -658,31 +659,34 @@ class Orchestrator:
             return
         project = self.get_project(task.project_id)
         rounds = getattr(project, "auto_heal_rounds", 0) or 0
-        if rounds <= 0 or select_agent("review", self.adapters) is None:
+        if rounds <= 0:
             return
+        try:
+            if project.verify_cmd:
+                await self._heal_via_verify(task_id, project, rounds)
+            elif select_agent("review", self.adapters) is not None:
+                await self._heal_via_review(task_id, rounds)
+        except Exception:  # noqa: BLE001 - best-effort; never fail the task
+            logger.exception("auto-heal(%s) failed", task_id)
 
+        # Safety net: auto-heal must never downgrade a successful run. If a revise
+        # step left the task failed, restore it to the human gate (latest diff is
+        # still captured and the worktree intact).
+        final = self.get_task(task_id)
+        if final is not None and final.status == TaskStatus.failed.value:
+            self._update_task(task_id, status=TaskStatus.awaiting_approval.value, error=None)
+
+    async def _heal_via_review(self, task_id: int, rounds: int) -> None:
+        """Soft signal: AI reviews the diff; on request_changes, auto-revise and
+        re-review, up to ``rounds``. Pure (no deps, never touches main)."""
         try:
             review = await self.review_task(task_id)
-        except Exception:  # noqa: BLE001 - best-effort; never fail the task
+        except Exception:  # noqa: BLE001
             logger.info("auto-heal(%s): initial review skipped", task_id, exc_info=True)
             return
-
         used = 0
         while review is not None and review.verdict == "request_changes" and used < rounds:
-            current = self.get_task(task_id)
-            if current is None or current.status != TaskStatus.awaiting_approval.value:
-                break
-            try:
-                self.check_quota(current.project_id)
-            except QuotaExceeded:
-                logger.info("auto-heal(%s): stopping, quota exceeded", task_id)
-                break
-            try:
-                run_id = self._create_run(task_id, current.assigned_agent)
-                self._set_status(task_id, TaskStatus.running)
-                await self.revise_task(task_id, run_id)
-            except Exception:  # noqa: BLE001
-                logger.exception("auto-heal(%s): revise failed", task_id)
+            if not await self._heal_revise(task_id):
                 break
             used += 1
             try:
@@ -691,12 +695,57 @@ class Orchestrator:
                 logger.info("auto-heal(%s): re-review skipped", task_id, exc_info=True)
                 break
 
-        # Safety net: auto-heal must never downgrade a successful run. If a revise
-        # step left the task failed, restore it to the human gate (latest diff is
-        # still captured and the worktree intact).
-        final = self.get_task(task_id)
-        if final is not None and final.status == TaskStatus.failed.value:
-            self._update_task(task_id, status=TaskStatus.awaiting_approval.value, error=None)
+    async def _heal_via_verify(self, task_id: int, project, rounds: int) -> None:
+        """Hard signal: run the project's verify_cmd in the worktree (deps linked
+        in, main untouched); on failure feed the output back to the agent and
+        re-verify, up to ``rounds``."""
+        task = self.get_task(task_id)
+        worktree = task.worktree_path if task else None
+        if not worktree or not Path(worktree).exists():
+            return
+        git = GitOpsEngine(project.path)
+        git.link_deps_into_worktree(worktree)
+        ok, output = git.verify_in_worktree(worktree, project.verify_cmd)
+        attempts = 0
+        while not ok and attempts < rounds:
+            revision = self._compose_verify_revision(project.verify_cmd, output)
+            if not await self._heal_revise(task_id, revision):
+                break
+            attempts += 1
+            git.link_deps_into_worktree(worktree)  # revise may have added files
+            ok, output = git.verify_in_worktree(worktree, project.verify_cmd)
+        logger.info("auto-heal(%s): verify %s after %d revision(s)",
+                    task_id, "passed" if ok else "still failing", attempts)
+
+    async def _heal_revise(self, task_id: int, revision: Optional[str] = None) -> bool:
+        """One bounded auto-revise step shared by both heal modes. Returns False if
+        it could not run (not at the gate, quota, or error) so the loop stops."""
+        current = self.get_task(task_id)
+        if current is None or current.status != TaskStatus.awaiting_approval.value:
+            return False
+        try:
+            self.check_quota(current.project_id)
+        except QuotaExceeded:
+            logger.info("auto-heal(%s): stopping, quota exceeded", task_id)
+            return False
+        try:
+            run_id = self._create_run(task_id, current.assigned_agent)
+            self._set_status(task_id, TaskStatus.running)
+            await self.revise_task(task_id, run_id, revision_override=revision)
+        except Exception:  # noqa: BLE001
+            logger.exception("auto-heal(%s): revise failed", task_id)
+            return False
+        return True
+
+    @staticmethod
+    def _compose_verify_revision(verify_cmd: str, output: str) -> str:
+        tail = (output or "").strip()[-4000:]
+        return (
+            "You previously attempted this task in THIS worktree; your changes are "
+            "already on disk. The project's verification command FAILED. Fix the "
+            "code so it passes, then stop. Do not revert unrelated prior work.\n\n"
+            f"$ {verify_cmd}\n{tail}"
+        )
 
     @staticmethod
     def _source_attachment_paths(project_path: str, task_id: int) -> list[Path]:

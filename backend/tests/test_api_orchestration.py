@@ -768,6 +768,41 @@ def test_auto_heal_revises_until_review_approves(repo, tmp_path):
     assert latest is not None and latest.verdict == "approve"
 
 
+def test_auto_heal_via_verify_revises_until_command_passes(repo, tmp_path):
+    """With a verify_cmd set, auto-heal runs it in the worktree and revises with
+    the failure output until it passes — a hard signal that never touches main."""
+    class VerifyHealAdapter(FakeAdapter):
+        def __init__(self):
+            super().__init__()
+            self.run_count = 0
+
+        async def run(self, spec, ctx):
+            self.run_count += 1
+            yield AgentEvent(EventType.meta, data={"session_id": "x"})
+            (Path(ctx.worktree_path) / "feature.txt").write_text("v\n")
+            if self.run_count >= 2:  # the verify-driven revise fixes it
+                (Path(ctx.worktree_path) / "healed.txt").write_text("ok\n")
+            yield AgentEvent(EventType.final, text="done", data={"session_id": "x"})
+
+    db = tmp_path / "vheal.db"
+    eng = create_engine(f"sqlite:///{db}", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(eng)
+    adapter = VerifyHealAdapter()
+    orch = Orchestrator({"claude": adapter}, engine=eng)
+    proj = orch.create_project("p", str(repo))
+    orch.update_project_verify(proj.id, "test -f healed.txt")
+    orch.update_project_auto_heal(proj.id, 1)
+    task = orch.create_task(proj.id, "add feature")
+
+    asyncio.run(orch.run_task(task.id))
+
+    t = orch.get_task(task.id)
+    assert t.status == "awaiting_approval"  # human still gates; never auto-merged
+    assert adapter.run_count == 2  # original run + one verify-driven revise
+    assert orch.get_latest_review(task.id) is None  # verify path doesn't AI-review
+    assert not (repo / "healed.txt").exists()  # main untouched; fix only in worktree
+
+
 def test_auto_heal_off_by_default(repo, tmp_path):
     """Default project has auto_heal_rounds=0: run_task does no review/revise."""
     db = tmp_path / "noheal.db"

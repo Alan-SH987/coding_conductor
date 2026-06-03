@@ -7,6 +7,7 @@ captured as a diff and only merged after human approval.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,9 +20,15 @@ from .errors import (
 )
 from .models import DiffFile, DiffResult, MergeResult, RepoInfo, WorktreeHandle
 
+logger = logging.getLogger(__name__)
+
 CONDUCTOR_NAME = "Coding Conductor"
 CONDUCTOR_EMAIL = "conductor@local"
 BRANCH_PREFIX = "conductor/task-"
+# Dependency dirs symlinked from the main checkout into a worktree so a verify
+# command can run there (worktrees don't get git-ignored deps). Checked at the
+# repo root and one level down (covers ./node_modules, backend/.venv, …).
+DEP_DIR_NAMES = ("node_modules", ".venv", "venv")
 
 
 class GitOpsEngine:
@@ -264,18 +271,18 @@ class GitOpsEngine:
             out = out[:4000] + "…(truncated)"
         return proc.returncode == 0, out.strip()
 
-    def _run_verify(self, cmd: str, timeout: int = 600) -> tuple[bool, str]:
-        """Run an operator-configured verify command in the main repo working dir.
+    def _run_verify(self, cmd: str, timeout: int = 600, cwd: Optional[str] = None) -> tuple[bool, str]:
+        """Run an operator-configured verify command and return (ok, output).
 
-        It runs HERE (not in a worktree) because that is the only checkout with
-        dependencies installed — a fresh worktree has no node_modules/.venv, so a
-        build/test would spuriously fail. ``shell=True`` so compound commands like
-        ``cd frontend && npm run build`` work. The command is configured by the
-        repo operator (trusted, CI-script equivalent), not from untrusted input.
+        Defaults to the main repo working dir (the merge gate). Auto-heal runs it
+        in the task worktree instead (verify_in_worktree) after
+        link_deps_into_worktree symlinks in the deps a fresh worktree lacks.
+        ``shell=True`` so compound commands like ``cd frontend && npm run build``
+        work. The command is set by the repo operator (trusted, CI-equivalent).
         """
         try:
             proc = subprocess.run(
-                cmd, shell=True, cwd=str(self.repo_path),
+                cmd, shell=True, cwd=cwd or str(self.repo_path),
                 capture_output=True, text=True, timeout=timeout,
             )
         except subprocess.TimeoutExpired:
@@ -284,6 +291,54 @@ class GitOpsEngine:
         if len(out) > 16000:
             out = "…(truncated)…\n" + out[-16000:]
         return proc.returncode == 0, out.strip()
+
+    def verify_in_worktree(self, worktree_path: str, cmd: str, timeout: int = 600) -> tuple[bool, str]:
+        """Run the verify command inside a task worktree (link deps in first).
+
+        Hard signal for auto-heal that never touches main — the worktree holds the
+        agent's changes plus symlinked deps, so tests/builds run in isolation.
+        """
+        return self._run_verify(cmd, timeout=timeout, cwd=worktree_path)
+
+    def link_deps_into_worktree(self, worktree_path: str) -> list[str]:
+        """Symlink the main checkout's dependency dirs into the worktree.
+
+        Lets a verify run in the worktree without copying or touching main. Only
+        links paths the worktree's git already ignores, so the symlink can never
+        leak into the captured diff. Idempotent; returns the relative paths linked.
+        """
+        repo, wt = self.repo_path, Path(worktree_path)
+        if not wt.exists():
+            return []
+        # candidate roots: repo top + one level down (skip hidden dirs like .git)
+        roots = [repo] + [d for d in repo.iterdir() if d.is_dir() and not d.name.startswith(".")]
+        linked: list[str] = []
+        for base in roots:
+            for name in DEP_DIR_NAMES:
+                src = base / name
+                if not src.is_dir():
+                    continue
+                rel = src.relative_to(repo)
+                dst = wt / rel
+                if dst.exists() or dst.is_symlink():
+                    continue
+                # Only link paths git ignores (so the symlink can't leak into the
+                # diff). Check in the MAIN checkout, where the dir actually exists,
+                # so directory-only patterns like "node_modules/" match. The tracked
+                # .gitignore is shared with the worktree, so this is an exact proxy.
+                chk = subprocess.run(
+                    ["git", "check-ignore", "-q", str(rel)],
+                    cwd=str(repo), capture_output=True,
+                )
+                if chk.returncode != 0:
+                    continue
+                try:
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    dst.symlink_to(src.resolve(), target_is_directory=True)
+                    linked.append(str(rel))
+                except OSError:
+                    logger.warning("link_deps: could not symlink %s", rel, exc_info=True)
+        return linked
 
     def remove_worktree(self, handle: WorktreeHandle, force: bool = True) -> None:
         args = ["worktree", "remove"]
