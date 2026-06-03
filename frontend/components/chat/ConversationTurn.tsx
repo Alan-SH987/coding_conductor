@@ -185,14 +185,21 @@ function PersistedProgressBlock({
   const summaryTooLong =
     progress.summary && progress.summary.length > PREVIEW_LENGTH;
 
+  // Flat, not a nested box: the reply reads as the assistant's chat message
+  // (the turn card already is the bubble), with tool-count/activity as quiet meta.
   return (
-    <div className="rounded-md border border-border/40 bg-muted/30 px-2.5 py-2 text-xs">
-      <div className="flex items-center gap-2 text-muted-foreground">
+    <div>
+      {progress.summary && (
+        <div className="whitespace-pre-wrap break-words text-sm text-foreground">
+          {expanded || !summaryTooLong
+            ? progress.summary
+            : progress.summary.slice(0, PREVIEW_LENGTH) + "..."}
+        </div>
+      )}
+      <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
         <span>{progress.toolCalls} tool calls</span>
         {progress.lastTool && (
-          <span className="font-mono text-muted-foreground">
-            [{progress.lastTool}]
-          </span>
+          <span className="font-mono">[{progress.lastTool}]</span>
         )}
         {summaryTooLong && (
           <button
@@ -204,13 +211,6 @@ function PersistedProgressBlock({
           </button>
         )}
       </div>
-      {progress.summary && (
-        <div className="mt-1.5 whitespace-pre-wrap text-foreground">
-          {expanded || !summaryTooLong
-            ? progress.summary
-            : progress.summary.slice(0, PREVIEW_LENGTH) + "..."}
-        </div>
-      )}
       <ActivityFeed feed={progress.feed ?? []} />
     </div>
   );
