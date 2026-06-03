@@ -81,6 +81,7 @@ export default function ProjectPage({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const attachmentsRef = useRef<PendingAttachment[]>([]);
   const isInitialLoad = useRef(true);
+  const prevTaskCount = useRef(0);
   const [isDragging, setIsDragging] = useState(false);
   const dragCounterRef = useRef(0);
 
@@ -303,13 +304,19 @@ export default function ProjectPage({
   }, [projectId]);
 
   useEffect(() => {
-    // Auto-scroll when tasks update or live events change
-    // Use instant scroll on initial load to avoid the scroll animation
+    // Auto-scroll when tasks update or live events change.
+    const taskCountChanged = tasks.length !== prevTaskCount.current;
+    prevTaskCount.current = tasks.length;
     if (isInitialLoad.current && tasks.length > 0) {
       bottomRef.current?.scrollIntoView({ behavior: "instant" });
       isInitialLoad.current = false;
     } else if (!isInitialLoad.current) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      // Jump instantly when a task is added/removed so a new task lands at the
+      // bottom without the long "scroll down through history" animation; follow
+      // smoothly only while a run streams events in.
+      bottomRef.current?.scrollIntoView({
+        behavior: taskCountChanged ? "instant" : "smooth",
+      });
     }
   }, [tasks.length, liveEvents.length]);
 
