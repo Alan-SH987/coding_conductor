@@ -821,6 +821,26 @@ def test_auto_heal_off_by_default(repo, tmp_path):
     assert orch.get_latest_review(task.id) is None  # no auto-review
 
 
+def test_repo_orientation_maps_structure_and_verify_bar(repo):
+    """build_repo_orientation gives the agent a noise-free repo map plus the
+    verify command its work is held to."""
+    from app import memory
+
+    (repo / "backend").mkdir()
+    (repo / "backend" / "app").mkdir()
+    (repo / "backend" / "pyproject.toml").write_text("x\n")
+    (repo / "node_modules").mkdir()  # noise -> excluded
+    (repo / "node_modules" / "junk.js").write_text("//\n")
+
+    out = memory.build_repo_orientation(repo, verify_cmd="pytest -q")
+    assert "backend/" in out and "pyproject.toml" in out  # mapped
+    assert "node_modules" not in out  # noise dir excluded
+    assert "pytest -q" in out  # verification bar surfaced
+
+    # no verify_cmd -> still maps, but no verification line
+    assert "verified with" not in memory.build_repo_orientation(repo)
+
+
 def test_handoff_cache_invalidates_after_record(repo):
     from app import memory
 

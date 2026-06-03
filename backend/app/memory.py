@@ -382,6 +382,68 @@ def build_context_bundle(
     )
 
 
+# Noise dirs left out of the repo map (build artifacts, deps, VCS, Conductor's own).
+_ORIENT_SKIP_DIRS = {
+    ".git", ".cc-worktrees", ".conductor", "node_modules", ".venv", "venv",
+    "__pycache__", ".next", "dist", "build", ".pytest_cache", ".mypy_cache",
+    ".ruff_cache", "target", ".idea", ".vscode", ".turbo", "coverage", "out",
+}
+
+
+def _repo_tree(root: Path, max_lines: int = 48, per_dir: int = 16) -> str:
+    """A shallow (depth-2) directory map, skipping noise dirs and dotfiles."""
+    def visible(d: Path) -> list[Path]:
+        try:
+            items = sorted(d.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
+        except OSError:
+            return []
+        return [
+            p for p in items
+            if not p.name.startswith(".") and p.name not in _ORIENT_SKIP_DIRS
+        ][:per_dir]
+
+    lines: list[str] = []
+    for top in visible(root):
+        if len(lines) >= max_lines:
+            break
+        if top.is_dir():
+            lines.append(f"{top.name}/")
+            for child in visible(top):
+                if len(lines) >= max_lines:
+                    break
+                lines.append(f"  {child.name}{'/' if child.is_dir() else ''}")
+        else:
+            lines.append(top.name)
+    return "\n".join(lines)
+
+
+def build_repo_orientation(repo_path: str | Path, verify_cmd: str | None = None) -> str:
+    """A concise, deterministic project orientation injected into every run.
+
+    Gives the agent a map of the repo (so it doesn't burn turns rediscovering the
+    structure) plus the bar its work is held to (verify_cmd). No LLM; recomputed
+    cheaply each run. Injected via system prompt, so it never pollutes the diff.
+    """
+    root = Path(repo_path)
+    if not root.is_dir():
+        return ""
+    parts: list[str] = []
+    tree = _repo_tree(root)
+    if tree:
+        parts.append("Repository layout (top levels):\n```\n" + tree + "\n```")
+    if verify_cmd:
+        parts.append(
+            "This project is verified with the command below — write code that "
+            f"will pass it:\n`{verify_cmd}`"
+        )
+    if not parts:
+        return ""
+    return (
+        "## Project orientation\n\nYou are working in a git worktree of this "
+        "repository. Orient from this map before exploring:\n\n" + "\n\n".join(parts)
+    )
+
+
 def read_handoffs(repo_path: str | Path) -> str:
     """The accumulated handoff entries, or '' if none (seed placeholder dropped)."""
     f = memory_dir(repo_path) / "handoff.md"

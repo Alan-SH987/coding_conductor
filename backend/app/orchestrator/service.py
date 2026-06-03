@@ -365,6 +365,7 @@ class Orchestrator:
             project_path = project.path
             project_id = task.project_id
             enabled_skills = project.enabled_skills
+            verify_cmd = project.verify_cmd
             task_tags = json.loads(task.tags) if task.tags else None
             source_task_id = task.source_task_id
 
@@ -395,6 +396,7 @@ class Orchestrator:
 
         spec = TaskSpec(goal=self._compose_goal_with_attachments(spec_goal, attachment_paths))
         bundle_parts = [
+            memory.build_repo_orientation(project_path, verify_cmd=verify_cmd),
             memory.build_context_bundle(
                 project_path,
                 query=spec_goal,
@@ -488,6 +490,7 @@ class Orchestrator:
             worktree_path = task.worktree_path
             branch = task.branch
             enabled_skills = project.enabled_skills
+            verify_cmd = project.verify_cmd
             task_tags = json.loads(task.tags) if task.tags else None
             review = s.exec(
                 select(models.Review)
@@ -499,6 +502,7 @@ class Orchestrator:
         findings = json.loads(review.findings_json) if review else []
         revision = revision_override or self._compose_revision_prompt(summary, findings)
         bundle_parts = [
+            memory.build_repo_orientation(project_path, verify_cmd=verify_cmd),
             memory.build_context_bundle(project_path, query=spec_goal, query_tags=task_tags),
             skills.build_skills_bundle(skills.parse_enabled(enabled_skills)),
             revision,
