@@ -12,6 +12,7 @@ interface ProgressInfo {
   toolCalls: number; // Number of tool calls made
   lastTool: string | null; // Last tool used
   hasThinking: boolean; // Agent is thinking
+  thoughts: string[]; // The agent's reasoning trail (deduped, capped)
 }
 
 function extractProgress(events: ApiEvent[]): ProgressInfo {
@@ -19,16 +20,21 @@ function extractProgress(events: ApiEvent[]): ProgressInfo {
   let toolCalls = 0;
   let lastTool: string | null = null;
   let hasThinking = false;
+  const thoughts: string[] = [];
 
   for (const ev of events) {
     if (ev.type === "thinking") {
       hasThinking = true;
       try {
         const p = JSON.parse(ev.payload_json);
-        if (p.text) {
-          // Truncate thinking to first line or 60 chars
-          const text = p.text.split("\n")[0];
-          currentAction = text.length > 60 ? text.slice(0, 57) + "..." : text;
+        const line = String(p.text || "")
+          .split("\n")
+          .map((s: string) => s.trim())
+          .find(Boolean);
+        if (line) {
+          const full = line.length > 140 ? line.slice(0, 137) + "..." : line;
+          if (thoughts[thoughts.length - 1] !== full) thoughts.push(full);
+          currentAction = line.length > 60 ? line.slice(0, 57) + "..." : line;
         }
       } catch {
         // ignore
@@ -57,7 +63,33 @@ function extractProgress(events: ApiEvent[]): ProgressInfo {
     }
   }
 
-  return { currentAction, toolCalls, lastTool, hasThinking };
+  return { currentAction, toolCalls, lastTool, hasThinking, thoughts: thoughts.slice(-15) };
+}
+
+// Collapsible disclosure of the agent's reasoning trail (its "thinking" events).
+function ReasoningDisclosure({ thoughts }: { thoughts: string[] }) {
+  const [open, setOpen] = useState(false);
+  if (!thoughts.length) return null;
+  return (
+    <div className="mt-1.5">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="text-muted-foreground hover:text-foreground"
+      >
+        {open ? "▾" : "▸"} 💭 reasoning ({thoughts.length})
+      </button>
+      {open && (
+        <ol className="mt-1 space-y-1 border-l border-border pl-2.5 text-muted-foreground">
+          {thoughts.map((t, i) => (
+            <li key={i} className="whitespace-pre-wrap break-words">
+              {t}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
 }
 
 function PanelChip({
@@ -88,7 +120,7 @@ function PanelChip({
 function PersistedProgressBlock({
   progress,
 }: {
-  progress: { toolCalls: number; lastTool: string | null; summary: string | null };
+  progress: { toolCalls: number; lastTool: string | null; summary: string | null; thoughts?: string[] };
 }) {
   const [expanded, setExpanded] = useState(false);
   const PREVIEW_LENGTH = 300;
@@ -121,6 +153,7 @@ function PersistedProgressBlock({
             : progress.summary.slice(0, PREVIEW_LENGTH) + "..."}
         </div>
       )}
+      <ReasoningDisclosure thoughts={progress.thoughts ?? []} />
     </div>
   );
 }
@@ -134,6 +167,7 @@ interface TaskProgressInfo {
   toolCalls: number;
   lastTool: string | null;
   summary: string | null;
+  thoughts?: string[];
 }
 
 export function ConversationTurn({
@@ -261,6 +295,7 @@ export function ConversationTurn({
                 {progress.currentAction}
               </div>
             )}
+            <ReasoningDisclosure thoughts={progress.thoughts} />
           </div>
         )}
 

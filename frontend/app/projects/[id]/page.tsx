@@ -22,6 +22,21 @@ import {
   type PanelState,
 } from "@/components/chat/RightPanel";
 
+// First non-empty line of a "thinking" event's payload, trimmed for inline display.
+function firstThought(payloadJson: string): string | null {
+  try {
+    const p = JSON.parse(payloadJson);
+    const line = String(p.text || "")
+      .split("\n")
+      .map((s: string) => s.trim())
+      .find(Boolean);
+    if (!line) return null;
+    return line.length > 140 ? line.slice(0, 137) + "..." : line;
+  } catch {
+    return null;
+  }
+}
+
 export default function ProjectPage({
   params,
 }: {
@@ -49,7 +64,7 @@ export default function ProjectPage({
   const [liveEvents, setLiveEvents] = useState<ApiEvent[]>([]);
   // Persist key progress info per task (survives stream end)
   const [taskProgress, setTaskProgress] = useState<
-    Record<number, { toolCalls: number; lastTool: string | null; summary: string | null }>
+    Record<number, { toolCalls: number; lastTool: string | null; summary: string | null; thoughts?: string[] }>
   >({});
   // Tag filtering state
   const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
@@ -83,10 +98,11 @@ export default function ProjectPage({
   // Extract progress info from a list of events (for historical tasks)
   function extractProgressFromEvents(
     events: ApiEvent[],
-  ): { toolCalls: number; lastTool: string | null; summary: string | null } {
+  ): { toolCalls: number; lastTool: string | null; summary: string | null; thoughts?: string[] } {
     let toolCalls = 0;
     let lastTool: string | null = null;
     let summary: string | null = null;
+    const thoughts: string[] = [];
 
     for (const ev of events) {
       if (ev.type === "tool_use") {
@@ -98,6 +114,9 @@ export default function ProjectPage({
         } catch {
           // ignore
         }
+      } else if (ev.type === "thinking") {
+        const t = firstThought(ev.payload_json);
+        if (t && thoughts[thoughts.length - 1] !== t) thoughts.push(t);
       } else if (ev.type === "final") {
         try {
           const p = JSON.parse(ev.payload_json);
@@ -111,7 +130,7 @@ export default function ProjectPage({
       }
     }
 
-    return { toolCalls, lastTool, summary };
+    return { toolCalls, lastTool, summary, thoughts: thoughts.slice(-15) };
   }
 
   async function load(): Promise<Task[]> {
@@ -155,7 +174,7 @@ export default function ProjectPage({
       });
 
       const results = await Promise.all(progressPromises);
-      const newProgress: Record<number, { toolCalls: number; lastTool: string | null; summary: string | null }> = {};
+      const newProgress: Record<number, { toolCalls: number; lastTool: string | null; summary: string | null; thoughts?: string[] }> = {};
       for (const result of results) {
         // Include tasks that have tool calls OR a summary
         if (result && (result.progress.toolCalls > 0 || result.progress.summary)) {
@@ -217,6 +236,24 @@ export default function ProjectPage({
           }));
         } catch {
           // ignore parse errors
+        }
+      } else if (ev.type === "thinking") {
+        const t = firstThought(ev.payload_json);
+        if (t) {
+          setTaskProgress((prev) => {
+            const cur = prev[taskId];
+            const thoughts = cur?.thoughts || [];
+            if (thoughts[thoughts.length - 1] === t) return prev;
+            return {
+              ...prev,
+              [taskId]: {
+                toolCalls: cur?.toolCalls || 0,
+                lastTool: cur?.lastTool || null,
+                summary: cur?.summary || null,
+                thoughts: [...thoughts, t].slice(-15),
+              },
+            };
+          });
         }
       } else if (ev.type === "final" || ev.type === "message") {
         try {
