@@ -404,6 +404,7 @@ class Orchestrator:
                 source_task_context=source_context,
             ),
             skills.build_skills_bundle(skills.parse_enabled(enabled_skills)),
+            memory.build_delivery_checklist(has_verify=bool(verify_cmd)),
         ]
         result_task = await self._drive_run_with_retries(
             task_id=task_id,
@@ -506,6 +507,7 @@ class Orchestrator:
             memory.build_context_bundle(project_path, query=spec_goal, query_tags=task_tags),
             skills.build_skills_bundle(skills.parse_enabled(enabled_skills)),
             revision,
+            memory.build_delivery_checklist(has_verify=bool(verify_cmd)),
         ]
         system_prompt = "\n\n".join(p for p in bundle_parts if p)
 

@@ -444,6 +444,28 @@ def build_repo_orientation(repo_path: str | Path, verify_cmd: str | None = None)
     )
 
 
+def build_delivery_checklist(has_verify: bool = False) -> str:
+    """A concise definition-of-done the agent self-checks against before declaring
+    the task complete. Static delivery discipline; injected via system prompt so it
+    closes the loop on each single run (complete, consistent, convention-following).
+    """
+    items = [
+        "the task goal is FULLY addressed — every part, not just the easy bits",
+        "the change is complete and self-consistent — no half-done edits, stray "
+        "debug output, or leftover TODOs",
+        "it matches the surrounding code's conventions and patterns",
+        "you did not break or revert unrelated code",
+    ]
+    if has_verify:
+        items.append("the change would pass the project's verification command (shown above)")
+    bullets = "\n".join(f"- {it}" for it in items)
+    return (
+        "## Before you finish\n\nRe-read your own diff and confirm:\n" + bullets
+        + "\n\nIf any check fails, fix it before ending — do not hand off incomplete "
+        "or broken work."
+    )
+
+
 def read_handoffs(repo_path: str | Path) -> str:
     """The accumulated handoff entries, or '' if none (seed placeholder dropped)."""
     f = memory_dir(repo_path) / "handoff.md"

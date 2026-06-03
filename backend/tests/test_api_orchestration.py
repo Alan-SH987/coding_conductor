@@ -841,6 +841,17 @@ def test_repo_orientation_maps_structure_and_verify_bar(repo):
     assert "verified with" not in memory.build_repo_orientation(repo)
 
 
+def test_delivery_checklist_gates_verify_item_on_presence():
+    """The definition-of-done lists completeness checks always, and the verify
+    item only when the project has a verify command."""
+    from app import memory
+
+    base = memory.build_delivery_checklist(has_verify=False)
+    assert "FULLY addressed" in base and "unrelated code" in base
+    assert "verification command" not in base
+    assert "verification command" in memory.build_delivery_checklist(has_verify=True)
+
+
 def test_handoff_cache_invalidates_after_record(repo):
     from app import memory
 
