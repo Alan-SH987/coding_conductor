@@ -1,10 +1,98 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { type Task, type Event as ApiEvent } from "@/lib/api";
 import { Badge, Button } from "@/components/ui";
 import type { PanelKind } from "@/components/chat/RightPanel";
+
+// One line of the agent's activity transcript, derived from a streamed event.
+export type FeedItem = { kind: "message" | "thinking" | "tool" | "error"; text: string };
+
+const FEED_ICON: Record<FeedItem["kind"], string> = {
+  message: "💬",
+  thinking: "💭",
+  tool: "🔧",
+  error: "⚠️",
+};
+
+// Flatten streamed events into a readable, ordered transcript: the agent's
+// narration, reasoning, tool actions, and errors. Noise (meta/cost/tool_result)
+// is dropped; `final` is shown separately as the summary.
+export function buildActivityFeed(events: ApiEvent[]): FeedItem[] {
+  const feed: FeedItem[] = [];
+  const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+  for (const ev of events) {
+    let payload: { text?: string; data?: { name?: string; tool?: string }; tool?: string; name?: string } = {};
+    try {
+      payload = JSON.parse(ev.payload_json);
+    } catch {
+      payload = {};
+    }
+    const text = String(payload.text || "").trim();
+    if (ev.type === "message") {
+      if (text) feed.push({ kind: "message", text: clip(text, 600) });
+    } else if (ev.type === "thinking") {
+      const line = text.split("\n").map((s) => s.trim()).find(Boolean);
+      if (line) feed.push({ kind: "thinking", text: clip(line, 240) });
+    } else if (ev.type === "tool_use") {
+      const name =
+        payload.data?.name || payload.data?.tool || payload.tool || payload.name || text || "tool";
+      feed.push({ kind: "tool", text: clip(String(name), 240) });
+    } else if (ev.type === "error") {
+      if (text) feed.push({ kind: "error", text: clip(text, 400) });
+    }
+  }
+  return feed;
+}
+
+// The accumulating transcript. `live` keeps it auto-scrolled to the latest line
+// and always expanded; otherwise it's a collapsible record of the finished run.
+export function ActivityFeed({ feed, live }: { feed: FeedItem[]; live?: boolean }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (live && ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+  }, [live, feed.length]);
+  if (!feed.length) return null;
+
+  const list = (
+    <div ref={ref} className="max-h-60 space-y-1 overflow-y-auto pr-1">
+      {feed.map((f, i) => (
+        <div key={i} className="flex gap-1.5 whitespace-pre-wrap break-words">
+          <span className="shrink-0">{FEED_ICON[f.kind]}</span>
+          <span
+            className={
+              f.kind === "thinking"
+                ? "text-muted-foreground"
+                : f.kind === "error"
+                  ? "text-red-300"
+                  : f.kind === "tool"
+                    ? "font-mono text-muted-foreground"
+                    : "text-foreground"
+            }
+          >
+            {f.text}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+
+  if (live) return <div className="mt-1.5">{list}</div>;
+  return (
+    <div className="mt-1.5">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="text-muted-foreground hover:text-foreground"
+      >
+        {open ? "▾" : "▸"} activity log ({feed.length})
+      </button>
+      {open && <div className="mt-1 border-l border-border pl-2">{list}</div>}
+    </div>
+  );
+}
 
 // Extract key progress info from live events for inline display
 interface ProgressInfo {
@@ -12,7 +100,6 @@ interface ProgressInfo {
   toolCalls: number; // Number of tool calls made
   lastTool: string | null; // Last tool used
   hasThinking: boolean; // Agent is thinking
-  thoughts: string[]; // The agent's reasoning trail (deduped, capped)
 }
 
 function extractProgress(events: ApiEvent[]): ProgressInfo {
@@ -20,7 +107,6 @@ function extractProgress(events: ApiEvent[]): ProgressInfo {
   let toolCalls = 0;
   let lastTool: string | null = null;
   let hasThinking = false;
-  const thoughts: string[] = [];
 
   for (const ev of events) {
     if (ev.type === "thinking") {
@@ -32,8 +118,6 @@ function extractProgress(events: ApiEvent[]): ProgressInfo {
           .map((s: string) => s.trim())
           .find(Boolean);
         if (line) {
-          const full = line.length > 140 ? line.slice(0, 137) + "..." : line;
-          if (thoughts[thoughts.length - 1] !== full) thoughts.push(full);
           currentAction = line.length > 60 ? line.slice(0, 57) + "..." : line;
         }
       } catch {
@@ -63,33 +147,7 @@ function extractProgress(events: ApiEvent[]): ProgressInfo {
     }
   }
 
-  return { currentAction, toolCalls, lastTool, hasThinking, thoughts: thoughts.slice(-15) };
-}
-
-// Collapsible disclosure of the agent's reasoning trail (its "thinking" events).
-function ReasoningDisclosure({ thoughts }: { thoughts: string[] }) {
-  const [open, setOpen] = useState(false);
-  if (!thoughts.length) return null;
-  return (
-    <div className="mt-1.5">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="text-muted-foreground hover:text-foreground"
-      >
-        {open ? "▾" : "▸"} 💭 reasoning ({thoughts.length})
-      </button>
-      {open && (
-        <ol className="mt-1 space-y-1 border-l border-border pl-2.5 text-muted-foreground">
-          {thoughts.map((t, i) => (
-            <li key={i} className="whitespace-pre-wrap break-words">
-              {t}
-            </li>
-          ))}
-        </ol>
-      )}
-    </div>
-  );
+  return { currentAction, toolCalls, lastTool, hasThinking };
 }
 
 function PanelChip({
@@ -120,7 +178,7 @@ function PanelChip({
 function PersistedProgressBlock({
   progress,
 }: {
-  progress: { toolCalls: number; lastTool: string | null; summary: string | null; thoughts?: string[] };
+  progress: { toolCalls: number; lastTool: string | null; summary: string | null; feed?: FeedItem[] };
 }) {
   const [expanded, setExpanded] = useState(false);
   const PREVIEW_LENGTH = 300;
@@ -153,7 +211,7 @@ function PersistedProgressBlock({
             : progress.summary.slice(0, PREVIEW_LENGTH) + "..."}
         </div>
       )}
-      <ReasoningDisclosure thoughts={progress.thoughts ?? []} />
+      <ActivityFeed feed={progress.feed ?? []} />
     </div>
   );
 }
@@ -167,7 +225,7 @@ interface TaskProgressInfo {
   toolCalls: number;
   lastTool: string | null;
   summary: string | null;
-  thoughts?: string[];
+  feed?: FeedItem[];
 }
 
 export function ConversationTurn({
@@ -290,17 +348,15 @@ export function ConversationTurn({
                 </button>
               )}
             </div>
-            {progress.currentAction && (
-              <div className="mt-1.5 truncate text-foreground">
-                {progress.currentAction}
-              </div>
-            )}
-            <ReasoningDisclosure thoughts={progress.thoughts} />
+            <ActivityFeed feed={buildActivityFeed(liveEvents)} live />
           </div>
         )}
 
         {/* Persisted progress info (shown after stream ends) */}
-        {!streaming && persistedProgress && persistedProgress.toolCalls > 0 && (
+        {!streaming &&
+          persistedProgress &&
+          (persistedProgress.toolCalls > 0 ||
+            (persistedProgress.feed?.length ?? 0) > 0) && (
           <PersistedProgressBlock progress={persistedProgress} />
         )}
 
