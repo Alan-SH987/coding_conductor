@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { type Task, type Event as ApiEvent } from "@/lib/api";
+import { api, type Task, type Event as ApiEvent, type Review } from "@/lib/api";
 import { Badge, Button } from "@/components/ui";
 import type { PanelKind } from "@/components/chat/RightPanel";
 
@@ -216,6 +216,48 @@ function PersistedProgressBlock({
   );
 }
 
+// The cross-model audit trail: each review labeled with the agent that did it,
+// its verdict, and findings — so the multi-agent dialogue (A implements →
+// B audits → A revises → …) is visible inline, not buried in a panel.
+function AuditTrail({ reviews }: { reviews: Review[] }) {
+  if (!reviews.length) return null;
+  return (
+    <div className="space-y-2 border-l-2 border-border pl-2.5 text-xs">
+      {reviews.map((r) => {
+        const ok = r.verdict === "approve";
+        return (
+          <div key={r.id}>
+            <div className="flex items-center gap-1.5">
+              <span>{ok ? "✅" : "⚠️"}</span>
+              <span className="font-mono text-foreground">{r.agent}</span>
+              <span className="text-muted-foreground">audited →</span>
+              <span className={ok ? "text-green-300" : "text-amber-300"}>
+                {ok ? "approved" : "requested changes"}
+              </span>
+            </div>
+            {r.summary && (
+              <div className="mt-0.5 whitespace-pre-wrap break-words text-muted-foreground">
+                {r.summary}
+              </div>
+            )}
+            {r.findings?.length > 0 && (
+              <ul className="mt-0.5 space-y-0.5">
+                {r.findings.map((f, i) => (
+                  <li key={i} className="break-words text-muted-foreground">
+                    <span className="font-mono">[{f.severity}]</span>{" "}
+                    {f.file && <span className="opacity-80">{f.file}: </span>}
+                    {f.comment}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // One task rendered as a conversation turn: a right-aligned "user" bubble (the
 // prompt) and a left-aligned "assistant" block (status + inline actions). When
 // streaming, key progress info shows inline so users can see what's happening
@@ -274,6 +316,23 @@ export function ConversationTurn({
     "rejected",
     "failed",
   ].includes(task.status);
+
+  // Fetch the cross-model audit trail for finished tasks. The turn remounts on
+  // reloadNonce (its key), so this refetches after each run/review.
+  const [reviews, setReviews] = useState<Review[]>([]);
+  useEffect(() => {
+    if (!showReview) return;
+    let cancelled = false;
+    api
+      .listReviews(task.id)
+      .then((r) => {
+        if (!cancelled) setReviews(r);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [task.id, showReview]);
 
   return (
     <div className="space-y-2">
@@ -368,6 +427,8 @@ export function ConversationTurn({
             </span>
           </div>
         )}
+
+        <AuditTrail reviews={reviews} />
 
         {(canRun || atGate) && (
           <div className="flex flex-wrap gap-2">

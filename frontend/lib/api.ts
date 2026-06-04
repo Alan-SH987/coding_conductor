@@ -296,6 +296,7 @@ export const api = {
     http<{ task_id: number; diff: string }>(`/tasks/${id}/diff`),
   reviewTask: (id: number) => post<Review>(`/tasks/${id}/review`),
   getReview: (id: number) => http<Review | null>(`/tasks/${id}/review`),
+  listReviews: (id: number) => http<Review[]>(`/tasks/${id}/reviews`),
   reviseTask: (id: number) => post<Task>(`/tasks/${id}/revise`),
   approve: (id: number) => post<ApproveResult>(`/tasks/${id}/approve`),
   reject: (id: number) => post<Task>(`/tasks/${id}/reject`),

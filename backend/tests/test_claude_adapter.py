@@ -6,7 +6,7 @@ pure mapping layer.
 """
 
 from app.adapters import ClaudeAdapter, EventType, RunContext, TaskSpec
-from app.adapters.claude import _extract_json_object
+from app.adapters._review import extract_json_object as _extract_json_object
 
 # --- real records captured from `claude 2.1.31` (auth-failure path) ----------
 INIT = {

@@ -44,9 +44,11 @@ from .base import (
     AgentEvent,
     EventType,
     HealthStatus,
+    ReviewResult,
     RunContext,
     TaskSpec,
 )
+from ._review import parse_review, review_prompt
 
 CODEX_BIN = "codex"
 
@@ -158,6 +160,56 @@ class CodexAdapter(AgentAdapter):
         finally:
             if proc.returncode is None:
                 proc.kill()
+
+    # ----- review (read-only diff audit) --------------------------------
+    REVIEW_TIMEOUT = 180
+
+    async def review(self, goal: str, diff: str, repo_path: str) -> ReviewResult:
+        """Audit a captured diff via `codex exec` in a read-only sandbox.
+
+        Enables cross-model audit (codex reviewing another agent's diff). Runs
+        read-only so it never edits the repo; the last agent_message is the JSON
+        verdict, parsed by the shared review helper.
+        """
+        cmd = [
+            self.bin, "exec", "--json", "--skip-git-repo-check",
+            "-C", repo_path, "-s", "read-only",
+            "-m", self.model or self.DEFAULT_MODEL,
+            "-c", 'approval_policy="never"',
+            review_prompt(goal, diff),
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, cwd=repo_path,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            limit=8 * 1024 * 1024,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=self.REVIEW_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise RuntimeError("codex review timed out")
+
+        last_message = ""
+        for raw in stdout.decode("utf-8", "replace").splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if obj.get("type") == "item.completed":
+                item = obj.get("item") or {}
+                if item.get("type") == "agent_message" and item.get("text"):
+                    last_message = item["text"]
+        if not last_message:
+            detail = stderr.decode("utf-8", "replace").strip()
+            raise RuntimeError(detail or f"codex review exited {proc.returncode}")
+        return parse_review(last_message)
 
     # ----- event normalization ------------------------------------------
     def _map_event(self, obj: dict) -> list[AgentEvent]:

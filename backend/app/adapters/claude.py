@@ -31,6 +31,7 @@ from .base import (
     SubtaskSpec,
     TaskSpec,
 )
+from ._review import parse_review, review_prompt
 
 CLAUDE_BIN = "claude"
 
@@ -67,40 +68,6 @@ def _extract_json_array(text: str) -> list:
                     break  # this [...] wasn't a JSON array; try the next one
         start = text.find("[", start + 1)
     return []
-
-
-def _extract_json_object(text: str) -> dict:
-    """Best-effort: pull the first top-level JSON object out of model output."""
-    text = text.strip()
-    if text.startswith("```"):  # strip a markdown fence + optional language hint
-        text = text.strip("`")
-        nl = text.find("\n")
-        if nl != -1:
-            text = text[nl + 1:]
-    try:
-        v = json.loads(text)
-        return v if isinstance(v, dict) else {}
-    except json.JSONDecodeError:
-        pass
-    start = text.find("{")
-    while start != -1:
-        depth = 0
-        for i in range(start, len(text)):
-            c = text[i]
-            if c == "{":
-                depth += 1
-            elif c == "}":
-                depth -= 1
-                if depth == 0:
-                    try:
-                        v = json.loads(text[start:i + 1])
-                    except json.JSONDecodeError:
-                        v = None
-                    if isinstance(v, dict):
-                        return v
-                    break  # this {...} wasn't a JSON object; try the next one
-        start = text.find("{", start + 1)
-    return {}
 
 
 class ClaudeAdapter(AgentAdapter):
@@ -221,19 +188,18 @@ class ClaudeAdapter(AgentAdapter):
 
     # ----- review (read-only diff critique) ------------------------------
     REVIEW_TIMEOUT = 180
-    _VERDICTS = {"approve", "request_changes"}
-    _SEVERITIES = {"blocker", "warning", "nit"}
 
     async def review(
         self, goal: str, diff: str, repo_path: str
     ) -> ReviewResult:
-        """Critique a captured diff in plan mode (read-only, no edits).
+        """Audit a captured diff in plan mode (read-only, no edits).
 
         Same safety guarantee as ``plan()``: ``--permission-mode plan`` lets the
-        reviewer read the repo for context without touching the working tree.
+        reviewer read the repo for context without touching the working tree. The
+        adversarial prompt + parsing are shared so any model audits identically.
         """
         cmd = [
-            self.bin, "-p", self._compose_review_prompt(goal, diff),
+            self.bin, "-p", review_prompt(goal, diff),
             "--output-format", "json",
             "--permission-mode", "plan",
         ]
@@ -254,50 +220,7 @@ class ClaudeAdapter(AgentAdapter):
             detail = stderr.decode("utf-8", "replace").strip()
             raise RuntimeError(detail or f"claude review exited {proc.returncode}")
 
-        obj = _extract_json_object(self._result_text(stdout.decode("utf-8", "replace")))
-        findings: list[ReviewFinding] = []
-        for item in obj.get("findings") or []:
-            if not isinstance(item, dict):
-                continue
-            comment = str(item.get("comment", "")).strip()
-            if not comment:
-                continue
-            sev = str(item.get("severity", "")).strip().lower()
-            findings.append(ReviewFinding(
-                severity=sev if sev in self._SEVERITIES else "warning",
-                comment=comment,
-                file=str(item.get("file", "")).strip(),
-            ))
-        verdict = str(obj.get("verdict", "")).strip().lower()
-        if verdict not in self._VERDICTS:
-            # Infer a safe verdict when the model omits/garbles it: any blocker
-            # means changes are needed, otherwise treat it as an approval.
-            verdict = ("request_changes"
-                       if any(f.severity == "blocker" for f in findings)
-                       else "approve")
-        return ReviewResult(
-            verdict=verdict,
-            summary=str(obj.get("summary", "")).strip(),
-            findings=findings,
-        )
-
-    @staticmethod
-    def _compose_review_prompt(goal: str, diff: str) -> str:
-        return (
-            "You are a meticulous senior code reviewer. Review the unified DIFF "
-            "below against its GOAL. You may read the repository (read-only) for "
-            "context. Judge correctness, completeness vs the goal, obvious bugs, "
-            "and security issues. Be concise and specific.\n\n"
-            f"GOAL:\n{goal}\n\n"
-            f"DIFF:\n{diff}\n\n"
-            "Respond with ONLY a JSON object — no prose, no markdown fences:\n"
-            '{"verdict": "approve" | "request_changes", '
-            '"summary": "<1-3 sentence overall assessment>", '
-            '"findings": [{"severity": "blocker" | "warning" | "nit", '
-            '"file": "<path or empty>", "comment": "<specific issue>"}]}\n'
-            'Use "request_changes" if any blocker exists; otherwise "approve". '
-            "An empty findings array is fine when the change is clean."
-        )
+        return parse_review(self._result_text(stdout.decode("utf-8", "replace")))
 
     # ----- execution -----------------------------------------------------
     async def run(self, spec: TaskSpec, ctx: RunContext) -> AsyncIterator[AgentEvent]:

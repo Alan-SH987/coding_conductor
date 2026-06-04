@@ -852,6 +852,36 @@ def test_delivery_checklist_gates_verify_item_on_presence():
     assert "verification command" in memory.build_delivery_checklist(has_verify=True)
 
 
+def test_review_audited_by_a_different_agent(repo, tmp_path):
+    """Cross-model audit: the reviewer differs from the implementer when another
+    review-capable agent exists, and the audit trail records who audited."""
+    from app.orchestrator.routing import select_agent
+
+    class CodexFake(FakeAdapter):
+        name = "codex"
+
+        async def review(self, goal, diff, repo_path) -> ReviewResult:
+            return ReviewResult(verdict="approve", summary="codex audited", findings=[])
+
+    adapters = {"claude": FakeAdapter(), "codex": CodexFake()}
+    # selection avoids the implementer, but falls back if it's the only reviewer
+    assert select_agent("review", adapters, avoid="claude") == "codex"
+    assert select_agent("review", adapters, avoid="codex") == "claude"
+    assert select_agent("review", {"claude": FakeAdapter()}, avoid="claude") == "claude"
+
+    db = tmp_path / "xmodel.db"
+    eng = create_engine(f"sqlite:///{db}", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(eng)
+    orch = Orchestrator(adapters, engine=eng)
+    proj = orch.create_project("p", str(repo))
+    task = orch.create_task(proj.id, "do thing", agent="claude")
+    asyncio.run(orch.run_task(task.id))
+
+    review = asyncio.run(orch.review_task(task.id))
+    assert review.agent == "codex"  # the OTHER model audited claude's work
+    assert [r.agent for r in orch.list_reviews(task.id)] == ["codex"]  # trail records it
+
+
 def test_handoff_cache_invalidates_after_record(repo):
     from app import memory
 

@@ -1047,6 +1047,7 @@ class Orchestrator:
                 raise ValueError(f"task {task_id} not found")
             project = s.get(models.Project, task.project_id)
             project_path = project.path
+            implementer = task.assigned_agent
             goal = "\n".join(p for p in (task.title, task.description) if p)
             run = s.exec(
                 select(models.Run)
@@ -1060,7 +1061,10 @@ class Orchestrator:
         if not diff.strip():
             raise ReviewError("no captured diff to review")
 
-        reviewer_name = select_agent("review", self.adapters)
+        # Cross-model audit: the reviewer should differ from the implementer so a
+        # different model's blind spots don't overlap. Falls back to the same agent
+        # only if it's the only review-capable one.
+        reviewer_name = select_agent("review", self.adapters, avoid=implementer)
         reviewer = self.adapters.get(reviewer_name) if reviewer_name else None
         if reviewer is None or "review" not in reviewer.capabilities:
             raise ReviewError("no review-capable agent is available")
@@ -1092,6 +1096,16 @@ class Orchestrator:
                     and review.run_id != latest_run_id):
                 return None
             return review
+
+    def list_reviews(self, task_id: int) -> list[models.Review]:
+        """All reviews for a task, oldest first — the cross-model audit trail
+        (who audited, verdict, findings) the UI shows inline."""
+        with Session(self.engine) as s:
+            return list(s.exec(
+                select(models.Review)
+                .where(models.Review.task_id == task_id)
+                .order_by(models.Review.id.asc())
+            ).all())
 
     def _create_review(self, task_id, run_id, agent, result) -> models.Review:
         findings = [asdict(f) for f in result.findings]

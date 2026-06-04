@@ -680,6 +680,15 @@ def get_review(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
     return _review_out(review) if review else None
 
 
+@router.get("/tasks/{task_id}/reviews")
+def list_reviews(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
+    """The full cross-model audit trail for a task (oldest first), each labeled
+    with the agent that did the audit."""
+    if orch.get_task(task_id) is None:
+        raise HTTPException(404, f"task {task_id} not found")
+    return [_review_out(r) for r in orch.list_reviews(task_id)]
+
+
 @router.post("/tasks/{task_id}/revise", response_model=models.Task, status_code=202)
 async def revise_task(task_id: int, orch: Orchestrator = Depends(get_orchestrator)):
     """Re-run an at-gate task in its worktree to address its latest review.
